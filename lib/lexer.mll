@@ -1,5 +1,7 @@
 {
-open PostLexer
+open Parser
+
+type pretoken = { t : token; col : int }
 
 (** A type to represent all possible lexing errors *)
 type lexing_error_type =
@@ -27,7 +29,7 @@ let find_keyword =
   let kw_tbl = Hashtbl.create 17 in
   List.iter
     (fun (s, t) -> Hashtbl.add kw_tbl s t)
-    Parser.([
+    [
       ("case", CASE);
       ("class", CLASS);
       ("data", DATA);
@@ -45,7 +47,7 @@ let find_keyword =
       ("then", THEN);
       ("true", TRUE);
       ("where", WHERE);
-    ]);
+    ];
   fun s lexbuf ->
   let t = try Hashtbl.find kw_tbl s with Not_found -> LINDENT s in
   { t; col = col lexbuf }

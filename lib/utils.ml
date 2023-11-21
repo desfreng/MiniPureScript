@@ -59,9 +59,8 @@ let pp_token ppf t =
     | LINDENT s -> Format.fprintf ppf "lindent(%s)" s
     | INT_CST i -> Format.fprintf ppf "int_cst(%i)" i)
 
-let pp_pretoken ppf pre_tok =
-  PostLexer.(
-    Format.fprintf ppf "{t = %a; col = %i}" pp_token pre_tok.t pre_tok.col)
+let pp_pretoken ppf (pre_tok : Lexer.pretoken) =
+  Format.fprintf ppf "{t = %a; col = %i}" pp_token pre_tok.t pre_tok.col
 
 let pp_lexing_error ppf (err_type, loc) =
   pp_error_head ppf (loc, None);

@@ -5,12 +5,12 @@ let gen_tok =
   let in_ch = open_in filename in
   let lexbuf = Lexing.from_channel in_ch in
   Lexing.set_filename lexbuf filename;
-  fun () -> Lexer.gen_pretokens lexbuf
+  fun () -> PostLexer.next_token lexbuf
 
 let rec loop () =
   let pt = gen_tok () in
-  Format.printf "%a\n" Utils.pp_pretoken pt;
-  if pt.t <> EOF then loop ()
+  Format.printf "%a\n" Utils.pp_token pt;
+  if pt <> EOF then loop ()
 
 let () =
   try loop ()
