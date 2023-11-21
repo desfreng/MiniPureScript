@@ -87,7 +87,7 @@ rule gen_pretokens = parse
   | "="             { { t = EQ_SIGN; col = col lexbuf } }
 
   (* Operators *)
-  | "=="            { { t = EQUAL; col = col lexbuf } }
+  | "=="            { { t = EQ; col = col lexbuf } }
   | "/="            { { t = NOT_EQ; col = col lexbuf } }
   | '<'             { { t = LT; col = col lexbuf } }
   | "<="            { { t = LE; col = col lexbuf } }
@@ -95,14 +95,14 @@ rule gen_pretokens = parse
   | ">="            { { t = GE; col = col lexbuf } }
   | '+'             { { t = PLUS; col = col lexbuf } }
   | '-'             { { t = MINUS; col = col lexbuf } }
-  | '*'             { { t = AST; col = col lexbuf } }
-  | '/'             { { t = SLASH; col = col lexbuf } }
+  | '*'             { { t = MUL; col = col lexbuf } }
+  | '/'             { { t = DIV; col = col lexbuf } }
   | "<>"            { { t = CONCAT; col = col lexbuf } }
   | "&&"            { { t = AND; col = col lexbuf } }
   | "||"            { { t = OR; col = col lexbuf } }
 
   (* Typing *)
-  | "->"            { { t = RARROW; col = col lexbuf } }
+  | "->"            { { t = ARROW; col = col lexbuf } }
   | "=>"            { { t = EQRARROW; col = col lexbuf } }
   | "::"            { { t = DOUBLECOLON; col = col lexbuf } }
   | '.'             { { t = PERIOD; col = col lexbuf } }

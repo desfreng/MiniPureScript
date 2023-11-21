@@ -16,10 +16,10 @@ let pp_token ppf t =
     | WHERE -> Format.fprintf ppf "where"
     | TRUE -> Format.fprintf ppf "true"
     | THEN -> Format.fprintf ppf "then"
-    | SLASH -> Format.fprintf ppf "/"
+    | DIV -> Format.fprintf ppf "/"
     | SEMICOLON -> Format.fprintf ppf ";"
     | RPAR -> Format.fprintf ppf ")"
-    | RARROW -> Format.fprintf ppf "->"
+    | ARROW -> Format.fprintf ppf "->"
     | RACC -> Format.fprintf ppf "}"
     | PLUS -> Format.fprintf ppf "+"
     | PERIOD -> Format.fprintf ppf "."
@@ -43,7 +43,7 @@ let pp_token ppf t =
     | FORALL -> Format.fprintf ppf "forall"
     | FALSE -> Format.fprintf ppf "false"
     | EQ_SIGN -> Format.fprintf ppf "="
-    | EQUAL -> Format.fprintf ppf "=="
+    | EQ -> Format.fprintf ppf "=="
     | EQRARROW -> Format.fprintf ppf "=>"
     | EOF -> Format.fprintf ppf "#"
     | ELSE -> Format.fprintf ppf "else"
@@ -53,7 +53,7 @@ let pp_token ppf t =
     | CONCAT -> Format.fprintf ppf "<>"
     | CLASS -> Format.fprintf ppf "class"
     | CASE -> Format.fprintf ppf "case"
-    | AST -> Format.fprintf ppf "*"
+    | MUL -> Format.fprintf ppf "*"
     | UINDENT s -> Format.fprintf ppf "uindent(%s)" s
     | STR_CST s -> Format.fprintf ppf "str_cst(%s)" s
     | LINDENT s -> Format.fprintf ppf "lindent(%s)" s

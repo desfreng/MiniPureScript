@@ -1,0 +1,3 @@
+(tests
+ (names lexer partie1 partie2 partie3)
+ (libraries alcotest MiniPureScriptLib))
