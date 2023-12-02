@@ -13,11 +13,11 @@ type lexing_error_type =
 | IllegalCharacterInGap of char
 
 (** Excpetion throw on lexing error *)
-exception Lexing_error of lexing_error_type * Lexing.position
+exception LexingError of lexing_error_type * Lexing.position
 
 (** A function to raise an error at the current position *)
 let lexing_error err_type lexbuf =
-  raise (Lexing_error (err_type, Lexing.lexeme_start_p lexbuf))
+  raise (LexingError (err_type, Lexing.lexeme_start_p lexbuf))
 
 (** Compute the current column of the lexing buffer *)
 let col lexbuf =
@@ -64,7 +64,7 @@ let upper = ['A'-'Z']
 let other = lower | upper | digit | '\''
 let lindent = lower other*
 let uindent = upper (other | '.')*
-let integer = '0' | ['0'-'9'] digit*
+let integer = '0' | ['1'-'9'] digit*
 
 rule gen_pretokens = parse
   | '\n'            { Lexing.new_line lexbuf; gen_pretokens lexbuf }
@@ -109,6 +109,7 @@ rule gen_pretokens = parse
   | "::"            { { t = DOUBLECOLON; col = col lexbuf } }
   | '.'             { { t = PERIOD; col = col lexbuf } }
   | ','             { { t = COMMA; col = col lexbuf } }
+  | '|'             { { t = PIPE; col = col lexbuf } }
 
   (* Comments *)
   | "{-"            { multi_line_comment lexbuf; gen_pretokens lexbuf }

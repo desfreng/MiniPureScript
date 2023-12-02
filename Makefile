@@ -9,15 +9,15 @@ clean:
 	rm -f ppurse
 
 parse_test: ppurse
-	bash tests/test -v1 ../ppurse
+	cd test-files && bash ./test -1 ../ppurse
 
 typing_test: ppurse
-	bash tests/test -v2 ../ppurse
+	cd test-files && bash ./test -2 ../ppurse
 
 exec_test: ppurse
-	bash tests/test -v3 ../ppurse
+	cd test-files && bash ./test -3 ../ppurse
 
 test: ppurse
-	bash tests/test -all ../ppurse
+	cd test-files && bash ./test -all ../ppurse
 
-.PHONY: all clean ppurse
+.PHONY: all clean parse_test typing_test exec_test test

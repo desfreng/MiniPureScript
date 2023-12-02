@@ -1,8 +1,12 @@
 (ocamllex
- (modules lexer))
+ (modules Lexer))
 
 (menhir
- (modules parser))
+ (modules Parser))
 
 (library
  (name MiniPureScriptLib))
+
+; (env
+;  (dev
+;   (flags :standard -warn-error -27-32-69-34-37)))
