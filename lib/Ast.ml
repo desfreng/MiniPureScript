@@ -3,6 +3,9 @@ type 'a pos = { v : 'a; beg_pos : Lexing.position; end_pos : Lexing.position }
 type typ = typ_kind pos
 and typ_kind = AstTVar of string | AstTData of string * typ list
 
+type coi_decl = coi_decl_kind pos
+and coi_decl_kind = CoI_Decl of string * typ list
+
 type binop =
   | Eq
   | Neq
@@ -24,13 +27,13 @@ and constant_kind = Int of int | Str of string | True | False
 type expr = expr_kind pos
 
 and expr_kind =
-  | ExprConst of constant (* constant *)
+  | ExprConstant of constant (* constant *)
   | ExprVar of string (* A variable value *)
   | WithType of expr * typ (* annoted expression *)
   | Neg of expr (* Unary negation *)
   | BinOp of expr * binop * expr (* binary op *)
   | AppFun of string (* Function name *) * expr list (* args of function call *)
-  | AppConst of
+  | AppConstr of
       string (* Constructor name *) * expr list (* args of constructor call *)
   | If of expr * expr * expr (* if expression *)
   | Block of expr list (* block of multiple expression *)
@@ -41,8 +44,8 @@ and expr_kind =
 and pattern = pattern_kind pos
 
 and pattern_kind =
-  | PatConst of constant (* Constant *)
-  | PatVar of string (* A variable (in lowercase) *)
+  | PatConstant of constant (* Constant *)
+  | PatVariable of string (* A variable (in lowercase) *)
   | PatConstructor of string * pattern list (* A constructor *)
 
 type decl = decl_kind pos
@@ -52,7 +55,7 @@ and decl_kind =
   | TypeDecl of
       string (* fun name *)
       * string list (* quantified var *)
-      * typ list (* class name used *)
+      * coi_decl list (* class name used *)
       * typ list (* args type *)
       * typ (* return type *)
   | Data of
@@ -64,7 +67,7 @@ and decl_kind =
       * string list (* class args *)
       * decl list (* list of type decls *)
   | Instance of
-      (typ (* class name implemented *) * typ list (* inst name *))
+      (coi_decl list (* inst required *) * coi_decl (* instance *))
       * decl list (* fun decl list *)
 
 type program = decl list

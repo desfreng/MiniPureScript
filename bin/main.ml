@@ -1,6 +1,8 @@
 let usage_msg = "Usage: ppurse [ --parse-only | --type-only | --help ] <file>\n"
 let type_only = ref false
 let parse_only = ref false
+let file_invalid_code = 1
+let error = 2
 
 let speclist =
   Arg.align
@@ -24,7 +26,7 @@ let in_file =
   | None ->
       Format.printf "%s: no input file given.@." Sys.argv.(0);
       Arg.usage speclist usage_msg;
-      exit 1
+      exit error
   | Some f -> f
 
 open MiniPureScriptLib
@@ -40,24 +42,26 @@ let () =
       if !parse_only then exit 0
       else (
         ignore prog;
-        (* let typ_prog = Typing.check prog in *)
-        (* if !type_only then exit 0 else ignore typ_prog *)
-        assert false)
+        let typ_prog = Typing.check_program prog in
+        if !type_only then exit 0 else ignore typ_prog)
     with
     | Lexer.LexingError (t, p) ->
-        Format.eprintf "%a@." CustomFormat.pp_lexing_error (t, p);
-        exit 1
+        Format.eprintf "%a@." ErrorPP.pp_lexing_error (t, p);
+        exit file_invalid_code
     | Parser.Error ->
-        Format.eprintf "%a@.Syntax Error.@." CustomFormat.pp_error_head
+        Format.eprintf "%a@.Syntax Error.@." ErrorPP.pp_error_head
           (Lexing.lexeme_start_p lexbuf, Some (Lexing.lexeme_end_p lexbuf));
-        exit 1
+        exit file_invalid_code
     | ParserError.UnexpectedText (tt, et, bp, ep) ->
-        Format.eprintf "%a@." CustomFormat.pp_parsing_error (tt, et, bp, ep);
-        exit 1
+        Format.eprintf "%a@." ErrorPP.pp_parsing_error (tt, et, bp, ep);
+        exit file_invalid_code
+    | TypingError.TypeError (terr, bp, ep) ->
+        Format.eprintf "%a@." ErrorPP.pp_typing_error (terr, bp, ep);
+        exit file_invalid_code
   with
   | Sys_error s ->
       Format.eprintf "%s@." s;
-      exit 2
+      exit error
   | e ->
-      Format.eprintf "Unexepected error:.@.%s@." (Printexc.to_string_default e);
-      exit 2
+      Format.eprintf "Unexepected error:.@%s@." (Printexc.to_string_default e);
+      exit error

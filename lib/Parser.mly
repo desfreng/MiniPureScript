@@ -4,7 +4,7 @@ open Ast
 let split_typ_list =
   let rec f acc = function
     | [] -> assert false
-    | [a] -> acc, a
+    | [a] -> List.rev acc, a
     | hd::tl -> f (hd::acc) tl
   in f []
 
@@ -134,31 +134,33 @@ tdecl:
 
 
 class_list:
-| v=ntype "=>"                  { [v] }
-| l=class_list v=ntype "=>"     { v::l }
+| v=cio_decl "=>"                  { [v] }
+| l=class_list v=cio_decl "=>"     { v::l }
 
 
 instance:
-| r=ntype
-    { (r, []) }
+| r=cio_decl
+    { ([], r) }
 
-| a=ntype "=>" r=ntype
-    { (r, [a]) }
+| a=cio_decl "=>" r=cio_decl
+    { ([a], r) }
 
-| "(" l=separated_nonempty_list(",", ntype) ")" "=>" r=ntype
-    { (r, l) }
+| "(" l=separated_nonempty_list(",", cio_decl) ")" "=>" r=cio_decl
+    { (l, r) }
 
-
-ntype: cstr=UINDENT arg=atype*
-    { { v=AstTData (cstr, arg); beg_pos=$startpos; end_pos=$endpos; } }
+cio_decl:
+| cstr=UINDENT arg=atype*
+    { { v=CoI_Decl (cstr, arg); beg_pos=$startpos; end_pos=$endpos; } }
 
 atype:
 | c=UINDENT         { { v=AstTData (c, []); beg_pos=$startpos; end_pos=$endpos; } }
 | t=non_const_type  { t }
 
 typ:
-| t=non_const_type  { t }
-| t=ntype           { t }
+| t=non_const_type
+    { t }
+| cstr=UINDENT arg=atype*
+    { { v=AstTData (cstr, arg); beg_pos=$startpos; end_pos=$endpos; } }
 
 non_const_type:
 | v=LINDENT         { { v=AstTVar v; beg_pos=$startpos; end_pos=$endpos; } }
@@ -172,8 +174,8 @@ pattern:
 
 
 patarg:
-| c=constant          { { v=PatConst c; beg_pos=$startpos; end_pos=$endpos } }
-| v=LINDENT           { { v=PatVar v; beg_pos=$startpos; end_pos=$endpos } }
+| c=constant          { { v=PatConstant c; beg_pos=$startpos; end_pos=$endpos } }
+| v=LINDENT           { { v=PatVariable v; beg_pos=$startpos; end_pos=$endpos } }
 // An Uindent can only be a "zeroary" Constructor
 // because we have no record in MiniPureScript
 | c=UINDENT           { { v=PatConstructor (c, []); beg_pos=$startpos; end_pos=$endpos } }
@@ -188,11 +190,11 @@ constant:
 
 
 atom:
-| c=constant                { { v=ExprConst c; beg_pos=$startpos; end_pos=$endpos } }
+| c=constant                { { v=ExprConstant c; beg_pos=$startpos; end_pos=$endpos } }
 | v=LINDENT                 { { v=ExprVar v; beg_pos=$startpos; end_pos=$endpos } }
 // An Uindent can only be a "zeroary" Constructor
 // because we have no record in MiniPureScript
-| c=UINDENT                 { { v=AppConst (c, []); beg_pos=$startpos; end_pos=$endpos } }
+| c=UINDENT                 { { v=AppConstr (c, []); beg_pos=$startpos; end_pos=$endpos } }
 | "(" e=expr ")"            { e }
 | "(" e=expr "::" t=typ ")" { { v=WithType (e, t); beg_pos=$startpos; end_pos=$endpos } }
 
@@ -211,7 +213,7 @@ expr:
     { { v=AppFun (f, arg); beg_pos=$startpos; end_pos=$endpos } }
 
 | f=UINDENT arg=atom+
-    { { v=AppConst (f, arg); beg_pos=$startpos; end_pos=$endpos } }
+    { { v=AppConstr (f, arg); beg_pos=$startpos; end_pos=$endpos } }
 
 | "if" c=expr "then" tb=expr "else" tf=expr
     { { v=If (c, tb, tf); beg_pos=$startpos; end_pos=$endpos } }
