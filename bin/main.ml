@@ -1,3 +1,16 @@
+let pp_error_head ppf
+    ((beg_pos, end_pos) : Lexing.position * Lexing.position option) =
+  let begin_col = beg_pos.pos_cnum - beg_pos.pos_bol in
+  let end_col =
+    match end_pos with
+    | Some pos -> pos.pos_cnum - pos.pos_bol
+    | None -> begin_col + 1
+  in
+  (* in VScode, lines start at 1, not 0 :/ *)
+  (* let begin_col, end_col = (begin_col + 1, end_col + 1) in *)
+  Format.fprintf ppf "File \"%s\", line %i, characters %i-%i:" beg_pos.pos_fname
+    beg_pos.pos_lnum begin_col end_col
+
 let usage_msg = "Usage: ppurse [ --parse-only | --type-only | --help ] <file>\n"
 let type_only = ref false
 let parse_only = ref false
@@ -7,7 +20,7 @@ let error = 2
 let speclist =
   Arg.align
     [
-      (* Disable '-help' beceause its ulgy without the -- *)
+      (* Disable '-help' because its ugly without the -- *)
       ( "-help",
         Arg.Unit (fun () -> raise (Arg.Bad "unknown option '-help'")),
         "" );
@@ -42,26 +55,23 @@ let () =
       if !parse_only then exit 0
       else (
         ignore prog;
-        let typ_prog = Typing.check_program prog in
+        let typ_prog = Typing.check_program false prog in
         if !type_only then exit 0 else ignore typ_prog)
     with
-    | Lexer.LexingError (t, p) ->
-        Format.eprintf "%a@." ErrorPP.pp_lexing_error (t, p);
+    | Lexer.LexingError (terr, p) ->
+        Format.eprintf "%a@.%s@." pp_error_head (p, None) terr;
         exit file_invalid_code
     | Parser.Error ->
-        Format.eprintf "%a@.Syntax Error.@." ErrorPP.pp_error_head
+        Format.eprintf "%a@.Syntax Error.@." pp_error_head
           (Lexing.lexeme_start_p lexbuf, Some (Lexing.lexeme_end_p lexbuf));
         exit file_invalid_code
-    | ParserError.UnexpectedText (tt, et, bp, ep) ->
-        Format.eprintf "%a@." ErrorPP.pp_parsing_error (tt, et, bp, ep);
-        exit file_invalid_code
+    | ParserError.UnexpectedText (terr, bp, ep)
     | TypingError.TypeError (terr, bp, ep) ->
-        Format.eprintf "%a@." ErrorPP.pp_typing_error (terr, bp, ep);
+        Format.eprintf "%a@.%s@." pp_error_head (bp, Some ep) terr;
         exit file_invalid_code
-  with
-  | Sys_error s ->
-      Format.eprintf "%s@." s;
-      exit error
-  | e ->
-      Format.eprintf "Unexepected error:.@%s@." (Printexc.to_string_default e);
-      exit error
+  with Sys_error s ->
+    Format.eprintf "%s@." s;
+    exit error
+(* | e ->
+    Format.eprintf "Unexpected error:.@%s@." (Printexc.to_string_default e);
+    exit error *)

@@ -3,9 +3,9 @@ open Ast
 open CommonTyping
 
 (** Wrapped unify functions for error management. *)
-let pat_unify_wrapped t1 t2 pat =
+let pat_unify_wrapped lenv t1 t2 pat =
   try unify t1 t2
-  with UnificationError e -> TypingError.unification_error e t1 t2 pat
+  with UnificationError e -> TypingError.unification_error lenv e t1 t2 pat
 
 (** [make_pat pat pat_typ] creates an TAst pattern from a kind and a type *)
 let make_pat pat pat_typ = { pat; pat_typ }
@@ -15,8 +15,8 @@ let make_pat pat pat_typ = { pat; pat_typ }
     corresponding to [pat] and the variable environment in which the expressions
     filtering this pattern must be typed. *)
 let rec type_pattern genv lenv (pat : Ast.pattern) typ =
-  let tpat, ty, bind = compute_pattern_type genv pat in
-  pat_unify_wrapped ty typ pat;
+  let tpat, ty, bind = compute_pattern_type lenv genv pat in
+  pat_unify_wrapped lenv ty typ pat;
   ( make_pat tpat ty,
     (* If a variable is in both, we replace the existing one in [lenv] by the
        one defined in [bind] *)
@@ -26,7 +26,7 @@ let rec type_pattern genv lenv (pat : Ast.pattern) typ =
     its computed type, and the bindings to add to the local environment to type
     the expressions filtering this pattern. The existing bindings must be
     replaced !*)
-and compute_pattern_type genv (pat : Ast.pattern) =
+and compute_pattern_type lenv genv (pat : Ast.pattern) =
   match pat.v with
   | PatConstant c ->
       let tconstant, ty = type_constant c in
@@ -36,7 +36,7 @@ and compute_pattern_type genv (pat : Ast.pattern) =
       (TPatWildcard, new_tvar (), SMap.empty)
   | PatVariable v ->
       (* This is a fresh variable, that we must introduce in the environment *)
-      let v_id = VarId.fresh (Some v) in
+      let v_id = VarId.fresh () in
       let v_typ = new_tvar () in
       (TPatVar v_id, v_typ, SMap.singleton v (v_typ, v_id))
   | PatConstructor (cst, args) -> (
@@ -55,7 +55,7 @@ and compute_pattern_type genv (pat : Ast.pattern) =
             let t_args =
               List.map
                 (fun x ->
-                  let p, t, ev = compute_pattern_type genv x in
+                  let p, t, ev = compute_pattern_type lenv genv x in
                   (x, p, t, ev))
                 args
             in
@@ -73,7 +73,7 @@ and compute_pattern_type genv (pat : Ast.pattern) =
                (ie. [constr_args]) with the type found (ie. [t_args]). *)
             List.iter2
               (fun cst_t (arg_exp, _, arg_t, _) ->
-                pat_unify_wrapped cst_t arg_t arg_exp)
+                pat_unify_wrapped lenv cst_t arg_t arg_exp)
               constr_args t_args;
             (* We convert the tuple (kind, typ) to an expression *)
             let args_exprs =
@@ -90,7 +90,9 @@ and compute_pattern_type genv (pat : Ast.pattern) =
             in
             (* We apply sigma to each type of the symbol declaration to compute
                the argument of the symbol. *)
-            let data_typ = List.map (fun x -> SMap.find x sigma) decl.tvars in
+            let data_typ =
+              List.map (fun x -> Hashtbl.find sigma x) decl.tvars
+            in
             (* Finally, we can build the pattern and the type ! *)
             let p = TPatConstructor (cst, args_exprs) in
             let t = TSymbol (decl.symbid, data_typ) in

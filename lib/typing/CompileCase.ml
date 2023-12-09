@@ -25,11 +25,8 @@ let get_fields genv expr cst_id =
       else
         (* [sigma] maps the quantified variables in the symbol to those in the
            expression. *)
-        let sigma =
-          List.fold_left2
-            (fun acc qvar typ -> SMap.add qvar typ acc)
-            SMap.empty decl.tvars args
-        in
+        let sigma = Hashtbl.create 17 in
+        List.iter2 (fun qvar typ -> Hashtbl.add sigma qvar typ) decl.tvars args;
         (* [cst_args] is the list of the type of each argument of the constructor *)
         let cst_args = List.map (subst sigma) (SMap.find cst_id decl.constrs) in
         (* For each field, we create the expression that retrieve its value. *)
@@ -122,19 +119,17 @@ let build_submat genv m =
         | p :: _, _ -> (
             match p.pat with
             | TPatWildcard | TPatVar _ -> acc
-            | TPatConstant cst -> CompPatConstrSet.add (TConstantConstr cst) acc
+            | TPatConstant cst -> PatConstrSet.add (TConstantConstr cst) acc
             | TPatConstructor (cst_id, _) ->
-                CompPatConstrSet.add (TSymbolConstr cst_id) acc))
-      CompPatConstrSet.empty m.pat_rows
+                PatConstrSet.add (TSymbolConstr cst_id) acc))
+      PatConstrSet.empty m.pat_rows
   in
   (* For each constructor we build its sub-matrix. *)
   let pat_cstr_mat =
-    CompPatConstrSet.fold
+    PatConstrSet.fold
       (fun pat_cstr pat_cstr_mat ->
-        CompPatConstrMap.add pat_cstr
-          (constructor_mat genv m pat_cstr)
-          pat_cstr_mat)
-      cstrs_set CompPatConstrMap.empty
+        PatConstrMap.add pat_cstr (constructor_mat genv m pat_cstr) pat_cstr_mat)
+      cstrs_set PatConstrMap.empty
   in
   (* We compute the sub-matrix for the other cases. To do this, we use a
      trick: We filter with the constructor TConstConstr (TConstUnit).
@@ -150,16 +145,16 @@ let rec f genv typ m =
   | e :: _, _ ->
       let constr_set = pat_constr_set genv e.expr_typ in
       let constr_mat, otherwise_mat = build_submat genv m in
-      let branch_expr = CompPatConstrMap.map (f genv typ) constr_mat in
+      let branch_expr = PatConstrMap.map (f genv typ) constr_mat in
 
       (* An otherwise branch is not mandatory when the set of
          "pattern constructors" of the type (ie. [constr_set]) is equal to the
          set of pattern constructors with a pattern matrix
          (ie. keys of [constr_mat]). *)
       if
-        (not (CompPatConstrSet.is_empty constr_set))
-        && CompPatConstrSet.for_all
-             (fun cst -> CompPatConstrMap.mem cst constr_mat)
+        (not (PatConstrSet.is_empty constr_set))
+        && PatConstrSet.for_all
+             (fun cst -> PatConstrMap.mem cst constr_mat)
              constr_set
       then { expr = TContructorCase (e, branch_expr, None); expr_typ = typ }
       else

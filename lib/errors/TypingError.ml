@@ -1,398 +1,426 @@
 open TAst
+open Ast
 
-type decl_type = Symbol | Class | Function | Constructor
+exception TypeError of string * Lexing.position * Lexing.position
 
-type type_error_kind =
-  | UnknownTypeVar of string
-  | UnknownDecl of { decl_name : string; decl_type : decl_type }
-  | ArityMismatch of {
-      decl_name : string;
-      decl_type : decl_type;
-      found : int;
-      expected : int;
-    }
-  | InvalidAnonymous
-  | UnknownVariable of string
-  | ExpectedTypeIn of { found : string; expected : string list }
-  | NotSameSymbol of {
-      t1 : string;
-      t2 : string;
-      symb1 : string;
-          (** The symbol name in t1 that differ from the one in t2 *)
-      symb2 : string;
-          (** The symbol name in t2 that differ from the one in t1 *)
-    }
-  | NotSameType of {
-      t1 : string;
-      t2 : string;
-      diff_t1 : string;  (** Part of t1 that differ from t2 *)
-      diff_t2 : string;  (** Part of t2 that differ from t1 *)
-    }
-  | VariableOccuring of {
-      t1 : string;
-      t2 : string;
-      var_name : string;
-          (** The variable of one type which appears in a part of the other type *)
-      typ : string;
-          (** The part of one of the types in which the variable appears *)
-    }
-  | MultipleBindingsInPattern of string
-  | VariableNotFunction of {
-      var_name : string;
-      var_typ : string;
-      expected_arity : int;
-    }
-  | UnresolvedInstance of string
-  | TypeVarAlreadyDeclared of {
-      var : string;
-      decl_type : decl_type;
-      decl_name : string;
-    }
-  | DeclAlreadyDeclared of { decl_name : string; decl_type : decl_type }
-  | ConstructorAlreadyInSymbol of { constr : string; symbol : string }
-  | ConstructorAlreadyInGEnv of {
-      constr : string;
-      symbol : string;
-      decl_symbol : string;
-    }
-  | QuantifiedVarInDeclFunClass of { fun_name : string; class_name : string }
-  | InstanceInDeclFunClass of { fun_name : string; class_name : string }
-  | MissingFunctionTypeDecl of string
-  | MultipleBindingsInFuntion of { var_name : string; fun_name : string }
-  | MultipleNonVarPatternInFuntion
-  | StrangeNonVarPlacement of string
-  | MissingFunImpl of string
-  | NotExhaustiveCase
-  | NotExhaustiveFun of string
-  | MultipleFunDef of string
-  | MissingMain
-  | SameFunInClass of { fun_name : string; class_name : string }
-  | CanUnifyInst of {
-      existing_inst : string * string list;
-      new_inst : string * string list;
-    }
-  | FunAlreadyDefInInstance of string
-  | FunNotInClass of { fname : string; class_name : string }
-  | FunUndefinedInInstance of string list
+let setup_pp_ttyp ?(atomic = false) lenv t =
+  let tvar_map = Hashtbl.create 17 in
+  let qvar_map = Hashtbl.create 17 in
+  SMap.iter (fun name qvid -> Hashtbl.add qvar_map qvid name) lenv.tvars;
+  let next_weak_name =
+    let cpt = ref 0 in
+    fun () ->
+      incr cpt;
+      "'weak" ^ string_of_int !cpt
+  in
+  let next_qvar_name =
+    let n_set =
+      ref
+        (String.fold_left
+           (fun acc c ->
+             let str = String.make 1 c in
+             if SMap.mem str lenv.tvars then acc else SSet.add str acc)
+           SSet.empty "abcdefghijklmnopqrstuvwxyz")
+    in
+    let cpt = ref 0 in
+    fun () ->
+      if SSet.is_empty !n_set then (
+        incr cpt;
+        "a" ^ string_of_int !cpt)
+      else
+        let v = SSet.choose !n_set in
+        n_set := SSet.remove v !n_set;
+        v
+  in
+  let rec name_vars t =
+    match unfold t with
+    | TVar { id; _ } -> (
+        match Hashtbl.find_opt tvar_map id with
+        | Some _ -> ()
+        | None -> Hashtbl.add tvar_map id (next_weak_name ()))
+    | TQuantifiedVar id ->
+        if Hashtbl.mem qvar_map id then ()
+        else Hashtbl.add qvar_map id (next_qvar_name ())
+    | TSymbol (_, args) -> List.iter name_vars args
+  in
+  List.iter name_vars t;
 
-exception TypeError of type_error_kind * Lexing.position * Lexing.position
+  fun ppf t ->
+    let rec pp fst ppf t =
+      match unfold t with
+      | TVar { id; _ } -> Format.pp_print_string ppf (Hashtbl.find tvar_map id)
+      | TQuantifiedVar x -> Format.pp_print_string ppf (Hashtbl.find qvar_map x)
+      | TSymbol (sid, []) -> Format.pp_print_string ppf sid
+      | TSymbol (sid, args) when fst ->
+          Format.pp_print_string ppf sid;
+          List.iter (Format.fprintf ppf " %a" (pp false)) args
+      | TSymbol (sid, args) ->
+          Format.fprintf ppf "(%s" sid;
+          List.iter (Format.fprintf ppf " %a" (pp false)) args;
+          Format.pp_print_string ppf ")"
+    in
+    pp (not atomic) ppf t
 
-(** The type variable is not in the current local env *)
-let unknown_type_var n (pos : Ast.typ) =
-  raise (TypeError (UnknownTypeVar n, pos.beg_pos, pos.end_pos))
+let setup_pp_inst lenv t =
+  let pp =
+    List.fold_left (fun acc (TInstance (_, ttyps)) -> ttyps @ acc) [] t
+    |> setup_pp_ttyp ~atomic:true lenv
+  in
+  fun ppf inst ->
+    let (TInstance (cn, inst_ttyp)) = inst in
+    Format.pp_print_string ppf cn;
+    List.iter (Format.fprintf ppf " %a" pp) inst_ttyp
 
-(** This symbol type is not in the global env *)
-let unknown_symbol n (pos : Ast.typ) =
-  raise
-    (TypeError
-       ( UnknownDecl { decl_name = n; decl_type = Symbol },
-         pos.beg_pos,
-         pos.end_pos ))
+let unknown_type_var n pos =
+  let txt =
+    Format.sprintf "The type variable '%s' is not defined is this declaration."
+      n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
 
-(** There is a mismatch between the arity expected and found for a symbol type *)
-let symbol_arity_mismatch decl ar_found (pos : Ast.typ) =
-  raise
-    (TypeError
-       ( ArityMismatch
-           {
-             decl_name = decl.symbid;
-             decl_type = Symbol;
-             found = ar_found;
-             expected = decl.arity;
-           },
-         pos.beg_pos,
-         pos.end_pos ))
+let unknown_symbol n pos =
+  let txt =
+    Format.sprintf "The type symbol '%s' is not defined in this declaration." n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
 
-(** An anonymous argument '_' is used as an expression. *)
-let invalid_anonymous (pos : Ast.expr) =
-  raise (TypeError (InvalidAnonymous, pos.beg_pos, pos.end_pos))
+let symbol_arity_mismatch decl ar_found pos =
+  let txt =
+    Format.sprintf
+      "The type symbol '%s' expects %i arguments, but is applied here to %i \
+       arguments."
+      decl.symbid decl.arity ar_found
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
 
-(** The variable [n] is not declared. *)
-let variable_not_declared n (pos : Ast.expr) =
-  raise (TypeError (UnknownVariable n, pos.beg_pos, pos.end_pos))
+let invalid_anonymous pos =
+  let txt = "Wildcard '_' not expected here." in
 
-(** The type found does not correspond to one of those we might have expected. *)
-let expected_type_in found expected_list (pos : Ast.expr) =
-  raise
-    (TypeError
-       ( ExpectedTypeIn
-           {
-             found = string_of_ttyp found;
-             expected = List.map string_of_ttyp expected_list;
-           },
-         pos.beg_pos,
-         pos.end_pos ))
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let variable_not_declared n pos =
+  let txt =
+    Format.sprintf "The variable '%s' is not defined in this expression." n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let expected_type_in lenv found expected_list pos =
+  let pp = setup_pp_ttyp lenv (found :: expected_list) in
+  let rec _pp ppf = function
+    | [] -> assert false
+    | [ x ] -> pp ppf x
+    | [ x; y ] -> Format.fprintf ppf "%a or %a." pp x pp y
+    | hd :: tl -> Format.fprintf ppf "%a, %a" pp hd _pp tl
+  in
+  let txt =
+    Format.asprintf
+      "This expression is of type %a. However, one of the following types is \
+       expected here: %a"
+      pp found _pp expected_list
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
 
 (** An error occured during the unification of [t1] and [t2]. *)
-let unification_error err t1 t2 (pos : 'a Ast.pos) =
-  match err with
-  | SymbolMismatch s ->
-      raise
-        (TypeError
-           ( NotSameSymbol
-               {
-                 t1 = string_of_ttyp t1;
-                 t2 = string_of_ttyp t2;
-                 symb1 = s.symb1;
-                 symb2 = s.symb2;
-               },
-             pos.beg_pos,
-             pos.end_pos ))
-  | VariableOccuring v ->
-      raise
-        (TypeError
-           ( VariableOccuring
-               {
-                 t1 = string_of_ttyp t1;
-                 t2 = string_of_ttyp t2;
-                 var_name = string_of_ttyp v.var;
-                 typ = string_of_ttyp v.typ;
-               },
-             pos.beg_pos,
-             pos.end_pos ))
-  | NotSameTypes t ->
-      raise
-        (TypeError
-           ( NotSameType
-               {
-                 t1 = string_of_ttyp t1;
-                 t2 = string_of_ttyp t2;
-                 diff_t1 = string_of_ttyp t.t1;
-                 diff_t2 = string_of_ttyp t.t2;
-               },
-             pos.beg_pos,
-             pos.end_pos ))
+let unification_error lenv uerr t1 t2 pos =
+  let txt =
+    match uerr with
+    | SymbolMismatch v ->
+        let pp = setup_pp_ttyp lenv [ t1; t2 ] in
+        Format.asprintf
+          "Impossible to match type %a with type %a, type symbols '%s' and \
+           '%s' are different."
+          pp t1 pp t2 v.symb1 v.symb2
+    | NotSameTypes v ->
+        let pp = setup_pp_ttyp lenv [ t1; t2; v.t1; v.t2 ] in
+        Format.asprintf
+          "Impossible to match type %a with type %a, the type %a is different \
+           from the type %a."
+          pp t1 pp t2 pp v.t1 pp v.t2
+    | VariableOccuring v ->
+        let pp = setup_pp_ttyp lenv [ t1; t2; v.var; v.typ ] in
+        Format.asprintf
+          "Unable to match type %a with type %a, variable of type %a appears \
+           in type %a."
+          pp t1 pp t2 pp v.var pp v.typ
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
 
-(** There is a mismatch between the arity expected and found for the call of a
-    constructor type *)
-let constr_arity_mismatch constr expected found (pos : 'a Ast.pos) =
+let constr_arity_mismatch constr expected found pos =
+  let txt =
+    Format.sprintf
+      "The constructor '%s' expects %i arguments, but is applied here to %i \
+       arguments."
+      constr expected found
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let unknown_constructor n pos =
+  let txt =
+    Format.sprintf "The constructor '%s' is not defined in this expression." n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let same_variable_in_pat n pos =
+  let txt =
+    Format.sprintf
+      "The variable '%s' is tied to several values in this case expression." n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let variable_not_a_function lenv var_name typ ex_arity pos =
+  let pp = setup_pp_ttyp lenv [ typ ] in
+  let txt =
+    Format.asprintf
+      "The variable '%s' of type %a cannot be interpreted as a function with \
+       %i arguments."
+      var_name pp typ ex_arity
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let unknown_function n pos =
+  let txt =
+    Format.sprintf "The function '%s' is not defined in this expression." n
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let function_arity_mismatch fname expected found pos =
+  let txt =
+    Format.sprintf
+      "The function '%s' expects %i arguments, but is applied here to %i \
+       arguments."
+      fname expected found
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let unresolved_instance lenv inst stack pos =
+  let pp = setup_pp_inst lenv (inst :: stack) in
+  let rec pp_l ppf = function
+    | [] -> ()
+    | hd :: tl ->
+        Format.fprintf ppf "While solving requirement of %a.@." pp hd;
+        pp_l ppf tl
+  in
+  let txt =
+    if stack <> [] then
+      Format.asprintf
+        "The instance '%a' cannot be resolved in the current environment.@.@.%a"
+        pp inst pp_l stack
+    else
+      Format.asprintf
+        "The instance '%a' cannot be resolved in the current environment." pp
+        inst
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let typ_var_already_decl_in_symb var symbol pos =
+  let txt =
+    Format.sprintf
+      "The type variable '%s' appear several times in the declaration of the \
+       type symbol '%s'."
+      var symbol
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let symbol_already_exists symbol pos =
+  let txt =
+    Format.sprintf "The type symbol '%s' is declared several times." symbol
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let constr_already_in_symb constr symbol pos =
+  let txt =
+    Format.sprintf
+      "The constructor '%s' is defined several times in the declaration of the \
+       type symbol '%s'."
+      constr symbol
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let constr_already_in_genv constr symdecl pos =
+  let txt =
+    Format.sprintf
+      "The constructor '%s' is already declared within the type symbol '%s'."
+      constr symdecl.symbid
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let function_already_exists fun_name pos =
+  let txt =
+    Format.sprintf "The function '%s' is declared several times." fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let class_already_exists class_name pos =
+  let txt =
+    Format.sprintf "The type class '%s' is declared several times." class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let typ_var_already_decl_in_class var class_name pos =
+  let txt =
+    Format.sprintf
+      "The type variable '%s' appear several times in the declaration of the \
+       type class '%s'."
+      var class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let no_qvar_in_class_fun_decl fun_name class_name pos =
+  let txt =
+    Format.sprintf
+      "The function '%s' in the type class '%s' is declared with quantified \
+       types variables."
+      fun_name class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let no_instl_in_class_fun_decl fun_name class_name pos =
+  let txt =
+    Format.sprintf
+      "The function '%s' of the type class '%s' is declared with type class \
+       constraints."
+      fun_name class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let missing_fun_type_decl fun_name pos =
+  let txt =
+    Format.sprintf "Missing type declaration of function '%s'." fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let typ_var_already_decl_in_fun var fun_name pos =
+  let txt =
+    Format.sprintf
+      "The type variable '%s' appear several times in the declaration of the \
+       function '%s'."
+      var fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let unknown_class n pos =
+  let txt = Format.sprintf "The type class '%s' is not defined." n in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let class_arity_mismatch class_decl ar_found pos =
+  let txt =
+    Format.sprintf
+      "The type class '%s' expects %i arguments, but is applied here to %i \
+       arguments."
+      class_decl.class_name class_decl.carity ar_found
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let same_variable_in_fun var_name fun_name pos =
+  let txt =
+    Format.sprintf
+      "The variable '%s' is tied to several values in this implementation of \
+       the function '%s'."
+      var_name fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let multiples_non_var_in_fun_args fun_name pos =
+  let txt =
+    Format.sprintf
+      "Several filter patterns that are not variables appear in this \
+       implementation of the function '%s'."
+      fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let strange_non_var_in_decls fun_name pos =
+  let txt =
+    Format.sprintf
+      "Not all implementations of the function '%s' have their filter patterns \
+       on the same argument."
+      fun_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let missing_fun_impl fun_name pos =
+  let txt = Format.sprintf "The function '%s' is not implemented." fun_name in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let not_exhaustive_case pos =
   raise
     (TypeError
-       ( ArityMismatch
-           { decl_name = constr; decl_type = Constructor; found; expected },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The constructor [n] is not in the global env *)
-let unknown_constructor n (pos : 'a Ast.pos) =
-  raise
-    (TypeError
-       ( UnknownDecl { decl_name = n; decl_type = Constructor },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The variable [n] appear more than one time in the pattern *)
-let same_variable_in_pat n (pos : Ast.pattern) =
-  raise (TypeError (MultipleBindingsInPattern n, pos.beg_pos, pos.end_pos))
-
-(* Previously variable [fn] of type [typ] is not a function.
-   Expected arity was [arity] *)
-let variable_not_a_function var_name typ ex_arity (pos : 'a Ast.pos) =
-  raise
-    (TypeError
-       ( VariableNotFunction
-           { var_name; var_typ = string_of_ttyp typ; expected_arity = ex_arity },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** This function name is not in the global env *)
-let unknown_function n (pos : 'a Ast.pos) =
-  raise
-    (TypeError
-       ( UnknownDecl { decl_name = n; decl_type = Function },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** There is a mismatch between the number of argument expected and found
-    for the call of a function *)
-let function_arity_mismatch fname expected found (pos : 'a Ast.pos) =
-  raise
-    (TypeError
-       ( ArityMismatch
-           { decl_name = fname; found; expected; decl_type = Function },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** An instance was needed to perform a function call and it cannot be resolved *)
-let unresolved_instance inst (pos : Ast.expr) =
-  let (TInstance (cls_name, inst_ttyp)) = inst in
-  raise
-    (TypeError
-       ( UnresolvedInstance
-           (List.fold_left
-              (fun acc typ -> acc ^ " " ^ string_of_ttyp typ)
-              cls_name inst_ttyp),
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The type variable [var] is already declared in the symbol type [symbol] *)
-let typ_var_already_decl_in_symb var symbol (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( TypeVarAlreadyDeclared { var; decl_name = symbol; decl_type = Symbol },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The symbol [symbol] already exists in the global environement *)
-let symbol_already_exists symbol (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( DeclAlreadyDeclared { decl_name = symbol; decl_type = Symbol },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The constructor [constr] is already declared in the symbol type [symbol] *)
-let constr_already_in_symb constr symbol (pos : Ast.decl) =
-  raise
-    (TypeError
-       (ConstructorAlreadyInSymbol { constr; symbol }, pos.beg_pos, pos.end_pos))
-
-(** The constructor [constr] of the symbol type [symdecl] is already declared in
-    the global environment, in the symbol [decl] *)
-let constr_already_in_genv constr symdecl decl (pos : Ast.decl) =
-  let symbol = symdecl.symbid in
-  let decl_symbol = decl.symbid in
-  raise
-    (TypeError
-       ( ConstructorAlreadyInGEnv { constr; symbol; decl_symbol },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The function [fun_name] already exists in the global environement *)
-let function_already_exists fun_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( DeclAlreadyDeclared { decl_name = fun_name; decl_type = Function },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The symbol [symbol] already exists in the global environement *)
-let class_already_exists class_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( DeclAlreadyDeclared { decl_name = class_name; decl_type = Class },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The type variable [var] is already declared in the class [class_name] *)
-let typ_var_already_decl_in_class var class_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( TypeVarAlreadyDeclared
-           { var; decl_name = class_name; decl_type = Class },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** In the class declaration [class_name] the function [fname] has quantified
-    variable *)
-let no_qvar_in_class_fun_decl fun_name class_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( QuantifiedVarInDeclFunClass { fun_name; class_name },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** In the class declaration [class_name] the function [fname] has instances
-    required. *)
-let no_instl_in_class_fun_decl fun_name class_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( InstanceInDeclFunClass { fun_name; class_name },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** We missed the type declaration of the function [fun_name] *)
-let missing_fun_type_decl fun_name (pos : Ast.decl) =
-  raise (TypeError (MissingFunctionTypeDecl fun_name, pos.beg_pos, pos.end_pos))
-
-(** The type variable [var] is already declared in the function [fun_name] *)
-let typ_var_already_decl_in_fun var fun_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       ( TypeVarAlreadyDeclared
-           { var; decl_name = fun_name; decl_type = Function },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** This class is not in the global env *)
-let unknown_class n (pos : 'a Ast.pos) =
-  raise
-    (TypeError
-       ( UnknownDecl { decl_name = n; decl_type = Class },
-         pos.beg_pos,
-         pos.end_pos ))
-
-let class_arity_mismatch class_decl ar_found (pos : Ast.coi_decl) =
-  raise
-    (TypeError
-       ( ArityMismatch
-           {
-             decl_name = class_decl.class_name;
-             decl_type = Class;
-             expected = class_decl.carity;
-             found = ar_found;
-           },
-         pos.beg_pos,
-         pos.end_pos ))
-
-(** The variable [n] appear more than one time in the funcion arguments *)
-let same_variable_in_fun var_name fun_name (pos : Ast.pattern) =
-  raise
-    (TypeError
-       ( MultipleBindingsInFuntion { var_name; fun_name },
-         pos.beg_pos,
-         pos.end_pos ))
-
-let multiples_non_var_in_fun_args (pos : Ast.pattern) =
-  raise (TypeError (MultipleNonVarPatternInFuntion, pos.beg_pos, pos.end_pos))
-
-let strange_non_var_in_decls fun_name (pos : Ast.decl) =
-  raise (TypeError (StrangeNonVarPlacement fun_name, pos.beg_pos, pos.end_pos))
-
-let missing_fun_impl fun_name (pos : Ast.decl) =
-  raise (TypeError (MissingFunImpl fun_name, pos.beg_pos, pos.end_pos))
-
-let not_exhaustive_case (pos : Ast.expr) =
-  raise (TypeError (NotExhaustiveCase, pos.beg_pos, pos.end_pos))
+       ("This pattern matching is not exhaustive.", pos.beg_pos, pos.end_pos))
 
 let not_exhaustive_fun fname (pos : Ast.decl list) =
   let fst = List.hd pos in
   let lst = List.rev pos |> List.hd in
-  raise (TypeError (NotExhaustiveFun fname, fst.beg_pos, lst.end_pos))
-
-let multiple_fun_def fname (pos : Ast.decl) =
-  raise (TypeError (MultipleFunDef fname, pos.beg_pos, pos.end_pos))
-
-let missing_main (pos : Ast.program) =
-  let lst = List.rev pos |> List.hd in
-  raise (TypeError (MissingMain, lst.beg_pos, lst.end_pos))
-
-let same_fun_in_class fun_name class_name (pos : Ast.decl) =
-  raise
-    (TypeError
-       (SameFunInClass { fun_name; class_name }, pos.beg_pos, pos.end_pos))
-
-let can_unify_instances prod_inst sdecl (pos : Ast.decl) =
-  let (TInstance (c_name, ttyps)) = prod_inst in
-  let new_inst = (c_name, List.map string_of_ttyp ttyps) in
-  let (TInstance (c_name, ttyps)) = sdecl.prod in
-  let existing_inst = (c_name, List.map string_of_ttyp ttyps) in
-  raise
-    (TypeError
-       (CanUnifyInst { new_inst; existing_inst }, pos.beg_pos, pos.end_pos))
-
-let function_already_defined fname (pos : Ast.decl) =
-  raise (TypeError (FunAlreadyDefInInstance fname, pos.beg_pos, pos.end_pos))
-
-let function_not_in_class fname class_decl (pos : Ast.decl) =
-  let class_name = class_decl.class_name in
-  raise
-    (TypeError (FunNotInClass { fname; class_name }, pos.beg_pos, pos.end_pos))
-
-let missing_functions fdone class_decl (pos : Ast.decl) =
-  let funlist =
-    SMap.fold
-      (fun x _ acc -> if SSet.mem x fdone then acc else x :: acc)
-      class_decl.cfun_decls []
+  let txt =
+    Format.sprintf
+      "Pattern matching on the arguments of the function '%s' is not \
+       exhaustive."
+      fname
   in
-  raise (TypeError (FunUndefinedInInstance funlist, pos.beg_pos, pos.end_pos))
+  raise (TypeError (txt, fst.beg_pos, lst.end_pos))
+
+let multiple_const_def cstname pos =
+  let txt =
+    Format.sprintf "The global constant '%s' is defined several times." cstname
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let missing_main pos =
+  let lst = List.rev pos |> List.hd in
+  raise
+    (TypeError
+       ( "Missing declaration and implementation of the function main.",
+         lst.beg_pos,
+         lst.end_pos ))
+
+let same_fun_in_class fun_name class_name pos =
+  let txt =
+    Format.sprintf
+      "The function '%s' is defined several times in the type class '%s'."
+      fun_name class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let can_unify_instances lenv prod_inst sdecl pos =
+  let pp = setup_pp_inst lenv [ prod_inst; sdecl.prod ] in
+  let txt =
+    Format.asprintf "Instances '%a' and '%a' can be unified." pp prod_inst pp
+      sdecl.prod
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let function_already_def_in_inst lenv fname inst pos =
+  let pp = setup_pp_inst lenv [ inst ] in
+  let txt =
+    Format.asprintf
+      "The function '%s' is implemented several times within the instance '%a'."
+      fname pp inst
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let function_not_in_class fname class_decl pos =
+  let txt =
+    Format.sprintf "The function '%s' is not defined in the type class '%s'."
+      fname class_decl.class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))
+
+let missing_functions lenv inst fdone class_decl pos =
+  let miss_fun =
+    SMap.filter (fun name _ -> SSet.mem name fdone) class_decl.cfun_decls
+  in
+  let rec _pp ppf = function
+    | [] -> assert false
+    | [ x ] -> Format.pp_print_string ppf x
+    | [ x; y ] -> Format.fprintf ppf "%s and %s" x y
+    | hd :: tl -> Format.fprintf ppf "%s, %a" hd _pp tl
+  in
+  let pp = setup_pp_inst lenv [ inst ] in
+  let txt =
+    Format.asprintf
+      "The '%a' instance is missing the implementation of the functions %a \
+       declared in the '%s' type class."
+      pp inst _pp
+      (SMap.to_list miss_fun |> List.map fst)
+      class_decl.class_name
+  in
+  raise (TypeError (txt, pos.beg_pos, pos.end_pos))

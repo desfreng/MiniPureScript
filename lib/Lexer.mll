@@ -3,21 +3,38 @@ open Parser
 
 type pretoken = { t : token; col : int }
 
-(** A type to represent all possible lexing errors *)
-type lexing_error_type =
-| IllegalCharacter of char
-| TooLargeInteger of string
-| IllegalLineFeedInString
-| UnterminatedString
-| UnterminatedStringGap
-| IllegalCharacterInGap of char
-
+exception LexingError of string * Lexing.position
 (** Excpetion throw on lexing error *)
-exception LexingError of lexing_error_type * Lexing.position
 
-(** A function to raise an error at the current position *)
-let lexing_error err_type lexbuf =
-  raise (LexingError (err_type, Lexing.lexeme_start_p lexbuf))
+let illegal_char c lexbuf =
+  let txt =
+    Format.sprintf "Illegal character '%c' (code: %#x)." c (Char.code c)
+  in
+  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
+
+let too_large_int int_str lexbuf =
+  let txt = Format.sprintf "Integer constant too large '%s'." int_str in
+  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
+
+let illegal_str_lf lexbuf =
+  raise
+    (LexingError ("Illegal line feed in string.", Lexing.lexeme_start_p lexbuf))
+
+let unterminated_str lexbuf =
+  raise
+    (LexingError
+       ("Non terminating string definition.", Lexing.lexeme_start_p lexbuf))
+
+let unterminated_str_gap lexbuf =
+  raise
+    (LexingError ("Non terminating string gap.", Lexing.lexeme_start_p lexbuf))
+
+let illegal_char_gap c lexbuf =
+  let txt =
+    Format.sprintf "Illegal character in string gap '%c' (code: %#x).@." c
+      (Char.code c)
+  in
+  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
 
 (** Compute the current column of the lexing buffer *)
 let col lexbuf =
@@ -76,7 +93,7 @@ rule gen_pretokens = parse
   | integer as s    { let col = col lexbuf in
                       let i = match int_of_string_opt s with
                               | Some i -> i
-                              | None -> lexing_error (TooLargeInteger s) lexbuf
+                              | None -> too_large_int s lexbuf
                       in { t = INT_CST i; col } }
 
   | '"'             { let col = col lexbuf in
@@ -116,7 +133,7 @@ rule gen_pretokens = parse
   | "--"            { single_line_comment lexbuf; gen_pretokens lexbuf }
 
   (* Unexpected ! *)
-  | _ as c          { lexing_error (IllegalCharacter c) lexbuf }
+  | _ as c          { illegal_char c lexbuf }
 
 and multi_line_comment = parse
 | '\n'              { Lexing.new_line lexbuf; multi_line_comment lexbuf }
@@ -134,18 +151,18 @@ and string_cst = parse
 | "\\\\"            { Buffer.add_char str_buf '\\'; string_cst lexbuf  }
 | "\\n"             { Buffer.add_char str_buf '\n'; string_cst lexbuf }
     (* To mimic the comportment of PureScript: *)
-| '\n'              { lexing_error IllegalLineFeedInString lexbuf }
+| '\n'              { illegal_str_lf lexbuf }
 | '\\'              { string_gap lexbuf; string_cst lexbuf }
 | '"'               { let s = Buffer.contents str_buf in
                       Buffer.clear str_buf; s }
-| eof               { lexing_error UnterminatedString lexbuf }
+| eof               { unterminated_str lexbuf }
 | _ as c            { Buffer.add_char str_buf c; string_cst lexbuf }
 
 and string_gap = parse
 | '\n'              { Lexing.new_line lexbuf; string_gap lexbuf }
 | '\t' | ' '        { string_gap lexbuf }
 | '\\'              { () }
-| eof               { lexing_error UnterminatedStringGap lexbuf }
-| _ as c            { lexing_error (IllegalCharacterInGap c) lexbuf }
+| eof               { unterminated_str_gap lexbuf }
+| _ as c            { illegal_char_gap c lexbuf }
 
 { }

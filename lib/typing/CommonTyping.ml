@@ -28,20 +28,20 @@ end = struct
     | Concat (a, b) -> fold f (fold f acc a) b
 end
 
-(** [add_vartype_to_lenv lenv v_name v_typ v_id] add the binding about the
-    variable [v_name] of type [v_typ] with id [v_id] to the local environment
-    [lenv]*)
+(** [add_vartype_to_lenv] add the binding about the variable [v_name] of type
+    [v_typ] with id [v_id] to the local environment [lenv] *)
 let add_vartype_to_lenv lenv v_name v_typ v_id =
   { lenv with vartype = SMap.add v_name (v_typ, v_id) lenv.vartype }
 
-(** [wf_type env t] Check if [t] is a well formed type in the environment
-    [env]. If so, return its corresponding type.
-    Otherwise, raise a [TypeError] with kind [IllFormedType] *)
+(** [wf_type] Check if [t] is a well formed type in the environment [env]. If
+    so, return its corresponding type. Otherwise, raise a [TypeError] with kind
+    [IllFormedType] *)
 let rec wf_type genv lenv (t : Ast.typ) =
   match t.v with
-  | AstTVar v ->
-      if SSet.mem v lenv.tvars then TQuantifiedVar v
-      else TypingError.unknown_type_var v t
+  | AstTVar v -> (
+      match SMap.find_opt v lenv.tvars with
+      | Some id -> TQuantifiedVar id
+      | None -> TypingError.unknown_type_var v t)
   | AstTData (n, args) -> (
       match SMap.find_opt n genv.symbsdecls with
       | Some decl ->
@@ -52,7 +52,7 @@ let rec wf_type genv lenv (t : Ast.typ) =
           else TypingError.symbol_arity_mismatch decl a t
       | None -> TypingError.unknown_symbol n t)
 
-(** [compute_expr_type lenv cst] returns the type and a TAst of the constant [cst] *)
+(** [type_constant] returns a TAst of an Ast constant with its type. *)
 let type_constant (cst : Ast.constant) =
   match cst.v with
   | True -> (TBoolConstant true, bool_t)

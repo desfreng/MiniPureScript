@@ -3,7 +3,6 @@ import Prelude
 import Effect
 import Effect.Console
 
-log:: Int -> Int
-log x = x
+
 main :: Effect Unit
-main = log "hello"
+main = let log = 1 in log "hello"

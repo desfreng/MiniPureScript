@@ -3,9 +3,7 @@ import Prelude
 import Effect
 import Effect.Console
 
-
-f:: Int -> Int
-f x = x
-f y = y
+log:: Int -> Int
+log x = x
 main :: Effect Unit
 main = log "hello"

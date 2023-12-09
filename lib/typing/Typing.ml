@@ -45,13 +45,15 @@ let list_type_variables =
     [var_types] are distincts. If so return this list and this length. Otherwise,
     call the function [error] with the repeating variable as argument. *)
 let different_var_types error var_types =
-  let _, arity =
+  let acc, _, arity =
     List.fold_left
-      (fun (var_set, arity) x ->
-        if SSet.mem x var_set then error x else (SSet.add x var_set, arity + 1))
-      (SSet.empty, 0) var_types
+      (fun (acc, var_set, arity) x ->
+        let tvar = TQVar.fresh () in
+        if SSet.mem x var_set then error x
+        else (tvar :: acc, SSet.add x var_set, arity + 1))
+      ([], SSet.empty, 0) var_types
   in
-  (var_types, arity)
+  (acc, arity)
 
 (** [get_function_list fname next_decls] finds all the declarations of a
     function of name [fnam] (if defined). If [fname] is [None], we returns the
@@ -88,13 +90,13 @@ let get_functions_list fname next_decls =
   (List.rev fdecls, next_decls)
 
 (** [check_pats_and_expr genv lenv fdecl decl (fname, pats, expr)] checks that
-    the function equation [fname] definied by the patterns [pats] and the
+    the function equation [fname] defined by the patterns [pats] and the
     expression [expr] is well-formed in the global (ie .[genv]) and local
     (ie. [lenv]) environments and matches the type declaration [fdecl] of the
     function.
 
     [decl] is used as a position marker. *)
-let check_pats_and_expr genv lenv (arity, ret_typ, args_typs)
+let check_pats_and_expr permissive genv lenv (arity, ret_typ, args_typs)
     (fname, pats, expr, decl) =
   let case_pos = ref None in
   let new_vars = ref SMap.empty in
@@ -118,14 +120,15 @@ let check_pats_and_expr genv lenv (arity, ret_typ, args_typs)
                  undefined, so we define it and do the same as before. *)
               case_pos := Some i
           | _, Some _ ->
-              (* We have found a non variable pattern at the wrong position.  *)
-              TypingError.multiples_non_var_in_fun_args pat);
+              if not permissive then
+                (* We have found a non variable pattern at the wrong position.  *)
+                TypingError.multiples_non_var_in_fun_args fname pat);
           (* we update the set of bindings *)
           new_vars :=
             SMap.union
               (fun x -> TypingError.same_variable_in_fun x fname pat)
               !new_vars patenv;
-          (* And we return the typped pattern *)
+          (* And we return the typed pattern *)
           cpat)
         pats args_typs
     in
@@ -139,17 +142,19 @@ let check_pats_and_expr genv lenv (arity, ret_typ, args_typs)
 
 (** [check_fun_equations genv lenv fdecl fun_body] *)
 let check_fun_equations genv lenv (fun_name, arity, ret_typ, args_typ) fun_body
-    permisive associed_instance =
+    permissive associed_instance =
   (* We type all equations and verify that they are well-formed. *)
   let fun_data =
-    List.map (check_pats_and_expr genv lenv (arity, ret_typ, args_typ)) fun_body
+    List.map
+      (check_pats_and_expr permissive genv lenv (arity, ret_typ, args_typ))
+      fun_body
   in
   (* Were should be the pattern in the function *)
   let _ =
     match (fun_data, fun_body) with
     | [ (None, _) ], [ _ ] -> ()
     | (None, _) :: _, (_, _, _, decl) :: _ ->
-        TypingError.multiple_fun_def fun_name decl
+        if arity = 0 then TypingError.multiple_const_def fun_name decl
     | (Some pat_pos, _) :: _, _ ->
         (* We check that only one non variable pattern occur, at the same
            position for each equation *)
@@ -161,16 +166,16 @@ let check_fun_equations genv lenv (fun_name, arity, ret_typ, args_typ) fun_body
                    () (* Non var at the same position. *)
                | None -> () (* Always vars *)
                | Some _ ->
-                   if permisive then ()
+                   if permissive then ()
                    else
                      (* Both Non var not at the same position *)
                      TypingError.strange_non_var_in_decls fun_name decl)
              fun_data fun_body)
     | _ -> assert false
   in
-  (* Everthings is ok. So now, we compile our function to an unique
+  (* Everything is ok. So now, we compile our function to an unique
      expression *)
-  let fvars = List.init arity (fun _ -> VarId.fresh None) in
+  let fvars = List.init arity (fun _ -> VarId.fresh ()) in
   let fargs =
     List.map2 (fun typ varid -> make_expr (TVariable varid) typ) args_typ fvars
   in
@@ -209,10 +214,16 @@ let check_symbol genv symbol_name var_types constrs pos =
         arity;
       }
     in
-    (* [lenv] is the local environment in witch the type of the contructor must
+    (* [lenv] is the local environment in witch the type of the constructor must
        be well-formed.*)
     let lenv =
-      { tvars = SSet.of_list tvars; instances = []; vartype = SMap.empty }
+      {
+        default_lenv with
+        tvars =
+          List.fold_left2
+            (fun acc tqvar name -> SMap.add name tqvar acc)
+            SMap.empty tvars var_types;
+      }
     in
     (* We predefined the current symbol in the global environment to allow
        recursive definition. *)
@@ -255,7 +266,7 @@ let check_symbol genv symbol_name var_types constrs pos =
             }
         | Some decl ->
             (* This constructor already exist ! Error. *)
-            TypingError.constr_already_in_genv constr_name symdecl decl pos)
+            TypingError.constr_already_in_genv constr_name decl pos)
       constrs_arity genv
 
 (** [check_type_decl genv lenv fun_name args_types res_typ] checks that the
@@ -273,7 +284,7 @@ let check_type_decl genv lenv fun_name args_types res_typ =
   let t_ret = wf_type genv lenv res_typ in
   {
     fun_name;
-    tvars = SSet.empty;
+    tvars = TQVar.Set.empty;
     finsts = [];
     args = t_args;
     arity;
@@ -294,10 +305,14 @@ let check_class genv class_name var_types fun_decls pos =
         (fun v -> TypingError.typ_var_already_decl_in_class v class_name pos)
         var_types
     in
-    let var_set = SSet.of_list tvars in
-    (* We build a local environement with the type variable we checked. It will
+    let tvarsmap =
+      List.fold_left2
+        (fun acc tqvar name -> SMap.add name tqvar acc)
+        SMap.empty tvars var_types
+    in
+    (* We build a local environment with the type variable we checked. It will
        be used to check functions declarations. *)
-    let lenv = { tvars = var_set; instances = []; vartype = SMap.empty } in
+    let lenv = { default_lenv with tvars = tvarsmap } in
     (* For each function of in the [fun_decls] list *)
     let cfun_decls =
       List.fold_left
@@ -323,11 +338,11 @@ let check_class genv class_name var_types fun_decls pos =
     in
     (* We build the class declaration *)
     let cls_decl = { class_name; carity; cfun_decls; tvars } in
-    (* And add it the the environement *)
+    (* And add it the the environment *)
     let genv =
       { genv with classdecls = SMap.add class_name cls_decl genv.classdecls }
     in
-    (* Next, we add each declared function to the global environement *)
+    (* Next, we add each declared function to the global environment *)
     SMap.fold
       (fun fname fdecl genv ->
         if SMap.mem fname genv.fundecls then
@@ -336,7 +351,7 @@ let check_class genv class_name var_types fun_decls pos =
           let fdecl =
             {
               fdecl with
-              tvars = var_set;
+              tvars = TQVar.Set.of_list tvars;
               finsts =
                 [
                   TInstance
@@ -344,8 +359,8 @@ let check_class genv class_name var_types fun_decls pos =
                 ];
             }
           in
-          (* No error occured, so the function declaration is added to the
-             global environement. *)
+          (* No error happened, so the function declaration is added to the
+             global environment. *)
           { genv with fundecls = SMap.add fname fdecl genv.fundecls })
       cfun_decls genv
 
@@ -361,17 +376,25 @@ let check_wf_instance genv lenv inst =
       else TInstance (c_name, t_args)
   | None -> TypingError.unknown_class c_name inst
 
-let check_instance genv tprog req_inst prod_inst fun_decls permisive decl =
+let check_instance genv tprog req_inst prod_inst fun_decls permissive decl =
   (* We compute the types variables *)
   let tvars = list_type_variables (prod_inst :: req_inst) in
+  let tvars_map, tvars_set =
+    SSet.fold
+      (fun name (smap, tset) ->
+        let tv_id = TQVar.fresh () in
+        (SMap.add name tv_id smap, TQVar.Set.add tv_id tset))
+      tvars
+      (SMap.empty, TQVar.Set.empty)
+  in
   (* to create an environment *)
-  let lenv = { tvars; instances = []; vartype = SMap.empty } in
+  let lenv = { default_lenv with tvars = tvars_map } in
   (* We check that instances required and produced are well formed *)
   let req_inst = List.map (check_wf_instance genv lenv) req_inst in
   let prod_inst = check_wf_instance genv lenv prod_inst in
   let (TInstance (prod_class_name, prod_typs)) = prod_inst in
   (* To build the schema *)
-  let schem_decl = { prod = prod_inst; req = req_inst; tvars } in
+  let schem_decl = { prod = prod_inst; req = req_inst; tvars = tvars_set } in
   (* We append it to all the schema for the class *)
   let schem_decl_class =
     match SMap.find_opt prod_class_name genv.schemadecls with
@@ -382,24 +405,24 @@ let check_instance genv tprog req_inst prod_inst fun_decls permisive decl =
           List.find_opt
             (fun (sdecl : schema_decl) ->
               (* Replace all quantified var of [sdecl.prod] by weak vars *)
-              let insttvar =
+              let instvars =
                 let sigma = sfresh_subst sdecl.tvars in
-                let (TInstance (_, insttvar)) = sdecl.prod in
-                List.map (subst sigma) insttvar
+                let (TInstance (_, instvars)) = sdecl.prod in
+                List.map (subst sigma) instvars
               in
               (* same for [prod_typs] *)
               let prod_typs =
-                let sigma = sfresh_subst tvars in
+                let sigma = sfresh_subst tvars_set in
                 List.map (subst sigma) prod_typs
               in
               (* And test if we can unify them. *)
-              List.for_all2 can_unify insttvar prod_typs)
+              List.for_all2 can_unify instvars prod_typs)
             l
         in
         match unified_existing_inst with
         | Some sdecl ->
             (* If so, report the error *)
-            TypingError.can_unify_instances prod_inst sdecl decl
+            TypingError.can_unify_instances lenv prod_inst sdecl decl
         | None -> schem_decl :: l)
     | None -> [ schem_decl ]
   in
@@ -417,19 +440,21 @@ let check_instance genv tprog req_inst prod_inst fun_decls permisive decl =
   let sigma =
     let sigma = lfresh_subst class_decl.tvars in
     List.iter2
-      (fun var typ -> unify (SMap.find var sigma) typ)
+      (fun var typ -> unify (Hashtbl.find sigma var) typ)
       class_decl.tvars prod_typs;
     sigma
   in
   (* This is the environment in witch we have to check the functions in [fun_decls] *)
-  let lenv = { tvars; instances = req_inst; vartype = SMap.empty } in
+  let lenv =
+    { tvars = tvars_map; instances = req_inst; vartype = SMap.empty }
+  in
   let rec loop fdone tprog next_decls =
     if next_decls = [] then (tprog, fdone)
     else
       let fun_body, next_decls = get_functions_list None next_decls in
       let fname = List.hd fun_body |> fun (x, _, _, _) -> x in
       if SSet.mem fname fdone then
-        TypingError.function_already_defined fname decl
+        TypingError.function_already_def_in_inst lenv fname prod_inst decl
       else
         match SMap.find_opt fname class_decl.cfun_decls with
         | Some fdecl ->
@@ -438,7 +463,7 @@ let check_instance genv tprog req_inst prod_inst fun_decls permisive decl =
             let fimpl =
               check_fun_equations genv lenv
                 (fname, fdecl.arity, ret_typ, args_typ)
-                fun_body permisive (Some prod_inst)
+                fun_body permissive (Some prod_inst)
             in
             let fun_impl_list =
               match SMap.find_opt fname tprog with
@@ -453,9 +478,9 @@ let check_instance genv tprog req_inst prod_inst fun_decls permisive decl =
   let tprog, fdone = loop SSet.empty tprog fun_decls in
   if SMap.for_all (fun x _ -> SSet.mem x fdone) class_decl.cfun_decls then
     (genv, tprog)
-  else TypingError.missing_functions fdone class_decl decl
+  else TypingError.missing_functions lenv prod_inst fdone class_decl decl
 
-let rec check_prog permisive genv tprog (p : Ast.program) :
+let rec check_prog permissive genv tprog (p : Ast.program) :
     global_env * tprogram =
   match p with
   | [] -> (genv, tprog)
@@ -463,19 +488,19 @@ let rec check_prog permisive genv tprog (p : Ast.program) :
       match decl.v with
       | Data (dname, typ_vars, cstrs) ->
           let genv = check_symbol genv dname typ_vars cstrs decl in
-          check_prog permisive genv tprog tl
+          check_prog permissive genv tprog tl
       | Class (cname, typ_args, fundecls) ->
           let genv = check_class genv cname typ_args fundecls decl in
-          check_prog permisive genv tprog tl
+          check_prog permissive genv tprog tl
       | FunDecl (fname, _, _) -> TypingError.missing_fun_type_decl fname decl
-      | TypeDecl _ -> check_fun_decl genv tprog decl tl permisive
+      | TypeDecl _ -> check_fun_decl genv tprog decl tl permissive
       | Instance ((req_inst, prod_int), funimpls) ->
           let genv, tprog =
-            check_instance genv tprog req_inst prod_int funimpls permisive decl
+            check_instance genv tprog req_inst prod_int funimpls permissive decl
           in
-          check_prog permisive genv tprog tl)
+          check_prog permissive genv tprog tl)
 
-and check_fun_decl genv tprog decl next_decls permisive =
+and check_fun_decl genv tprog decl next_decls permissive =
   match decl.v with
   | TypeDecl (fun_name, qvars, instl, args, ret) ->
       if SMap.mem fun_name genv.fundecls then
@@ -487,10 +512,14 @@ and check_fun_decl genv tprog decl next_decls permisive =
             (fun x -> TypingError.typ_var_already_decl_in_fun x fun_name decl)
             qvars
         in
-        let vars_set = SSet.of_list tvars in
+        let tvarsmap =
+          List.fold_left2
+            (fun acc tqvar name -> SMap.add name tqvar acc)
+            SMap.empty tvars qvars
+        in
         (* And add them to the environment to check that instances are
            well-formed.*)
-        let lenv = { tvars = vars_set; instances = []; vartype = SMap.empty } in
+        let lenv = { tvars = tvarsmap; instances = []; vartype = SMap.empty } in
         (* We compute the list of instances of the function, to do so, we check
            that each of them is well-formed. *)
         let finsts =
@@ -517,7 +546,7 @@ and check_fun_decl genv tprog decl next_decls permisive =
         (* We build the function declaration structure *)
         let fdecl =
           let fdecl = check_type_decl genv lenv fun_name args ret in
-          { fdecl with finsts; tvars = vars_set }
+          { fdecl with finsts; tvars = TQVar.Set.of_list tvars }
         in
         (* And add it to the global environment *)
         let genv =
@@ -533,13 +562,13 @@ and check_fun_decl genv tprog decl next_decls permisive =
           let fimpl =
             check_fun_equations genv lenv
               (fdecl.fun_name, fdecl.arity, fdecl.typ, fdecl.args)
-              fun_body permisive None
+              fun_body permissive None
           in
           (* and add it to the program *)
           let tprog = SMap.add fun_name [ fimpl ] tprog in
-          check_prog permisive genv tprog next_decls
+          check_prog permissive genv tprog next_decls
   | _ -> assert false
 
-let check_program p =
-  let genv, prog = check_prog false default_genv SMap.empty p in
+let check_program permissive p =
+  let genv, prog = check_prog permissive default_genv SMap.empty p in
   if SMap.mem "main" prog then (genv, prog) else TypingError.missing_main p

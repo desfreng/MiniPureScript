@@ -129,7 +129,10 @@ let rec pp_ast_expr ppf expr =
 (** TAst printing *)
 
 (** Pretty Print TAst type *)
-let pp_tast_ttyp ppf t = Format.pp_print_string ppf (TAst.string_of_ttyp t)
+let pp_tast_ttyp ppf t =
+  Format.pp_print_string ppf
+    (ignore t;
+     assert false)
 
 (** Pretty Print an TAst Constant *)
 let pp_tast_tconst ppf c =
@@ -147,7 +150,10 @@ let pp_tast_texpr ppf e =
     TAst.(
       match expr.expr with
       | TConstant c -> pp_tast_tconst ppf c
-      | TVariable i -> Format.pp_print_string ppf (VarId.name i)
+      | TVariable i ->
+          Format.pp_print_string ppf
+            (ignore i;
+             assert false)
       | TBinOp (lhs, op, rhs) ->
           Format.fprintf ppf "(%a) %a (%a)" pp lhs pp_binop op pp rhs
       | TApp (f, args) ->
@@ -164,12 +170,14 @@ let pp_tast_texpr ppf e =
           List.iter (Format.fprintf ppf "%a@;" pp) l;
           Format.fprintf ppf "@]"
       | TLet (v_id, v_expr, expr) ->
-          Format.fprintf ppf "let %s = (%a) in@;@[<v 2>%a@]" (VarId.name v_id)
+          Format.fprintf ppf "let %s = (%a) in@;@[<v 2>%a@]"
+            (ignore v_id;
+             assert false)
             pp v_expr pp expr
       | TGetField (e, i) -> Format.fprintf ppf "Field(%a, %i)" pp e i
       | TContructorCase (e, m, o) ->
           Format.fprintf ppf "case (%a) in@[<v 2>" pp e;
-          CompPatConstrMap.iter
+          PatConstrMap.iter
             (fun cstr e ->
               match cstr with
               | TConstantConstr s ->
@@ -190,7 +198,10 @@ let pp_tast_pat ppf p =
       match p.pat with
       | TPatConstant c -> pp_tast_tconst ppf c
       | TPatWildcard -> Format.pp_print_string ppf "_"
-      | TPatVar c -> Format.pp_print_string ppf (VarId.name c)
+      | TPatVar c ->
+          Format.pp_print_string ppf
+            (ignore c;
+             assert false)
       | TPatConstructor (s, args) ->
           Format.fprintf ppf "(%a).(%s)" pp_tast_ttyp p.pat_typ s;
           List.iter (Format.fprintf ppf " (%a)" pp) args)

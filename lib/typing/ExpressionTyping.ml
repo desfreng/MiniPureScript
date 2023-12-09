@@ -5,9 +5,9 @@ open PatternTyping
 open ResolveInstance
 
 (** Wrapped unify functions for error management. *)
-let expr_unify_wrapped t1 t2 expr =
+let expr_unify_wrapped lenv t1 t2 expr =
   try unify t1 t2
-  with UnificationError e -> TypingError.unification_error e t1 t2 expr
+  with UnificationError e -> TypingError.unification_error lenv e t1 t2 expr
 
 (** [make_expr e t] creates an TAst expression from a kind and a type *)
 let make_expr expr expr_typ = { expr; expr_typ }
@@ -18,7 +18,7 @@ let make_expr expr expr_typ = { expr; expr_typ }
     [expr]. *)
 let rec type_expr genv lenv (expr : Ast.expr) typ =
   let texpr, ty, inst2res = compute_expr_type genv lenv expr in
-  expr_unify_wrapped ty typ expr;
+  expr_unify_wrapped lenv ty typ expr;
   (make_expr texpr ty, inst2res)
 
 (** [compute_expr_type genv lenv expr] returns a TAst of the expression [expr],
@@ -60,7 +60,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       (* Equality *)
       let lhs_texpr_k, lhs_t, lhs_i2r = compute_expr_type genv lenv lhs in
       let rhs_texpr_k, rhs_t, rhs_i2r = compute_expr_type genv lenv rhs in
-      expr_unify_wrapped lhs_t rhs_t expr;
+      expr_unify_wrapped lenv lhs_t rhs_t expr;
       if
         is_unit_t lhs_t || is_bool_t lhs_t || is_int_t lhs_t
         || is_string_t lhs_t
@@ -68,7 +68,8 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
         let lhs = make_expr lhs_texpr_k lhs_t in
         let rhs = make_expr rhs_texpr_k rhs_t in
         (TBinOp (lhs, op, rhs), bool_t, M.(lhs_i2r <> rhs_i2r))
-      else TypingError.expected_type_in lhs_t [ bool_t; int_t; string_t ] expr
+      else
+        TypingError.expected_type_in lenv lhs_t [ bool_t; int_t; string_t ] expr
   | BinOp (lhs, ((And | Or) as op), rhs) ->
       (* Boolean operations *)
       let lhs_texpr, lhs_i2r = type_expr genv lenv lhs bool_t in
@@ -83,7 +84,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       let cond_expr, cond_i2r = type_expr genv lenv c bool_t in
       let tb_texpr_k, tb_t, tb_i2r = compute_expr_type genv lenv tb in
       let fb_texpr_k, fb_t, fb_i2r = compute_expr_type genv lenv fb in
-      expr_unify_wrapped tb_t fb_t expr;
+      expr_unify_wrapped lenv tb_t fb_t expr;
       let tb = make_expr tb_texpr_k tb_t in
       let fb = make_expr fb_texpr_k fb_t in
       (TIf (cond_expr, tb, fb), tb_t, M.(cond_i2r <> tb_i2r <> fb_i2r))
@@ -102,7 +103,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
             (* 1. Find the type of v_exp and build its texpr_kind *)
             let v_texp_k, v_typ, v_i2r = compute_expr_type genv lenv v_exp in
             (* 2. Create a new id for the variable v_name. *)
-            let v_id = VarId.fresh (Some v_name) in
+            let v_id = VarId.fresh () in
             (* 3. Add the mapping v_name -> (v_typ, v_id) to the environment *)
             let lenv = add_vartype_to_lenv lenv v_name v_typ v_id in
             (* 4. Add (v_id, v_texpr) to the bindings list and, update the accumulator *)
@@ -113,10 +114,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       let expr_k, te, e_i2r = compute_expr_type genv lenv e in
       (* For each bindings, we add a TLet struct.
          This struct is like in OCaml, we bind one variable to an expression
-         and continue the computation on another one.
-
-         Small note: No need to type the continuation of the computation because
-         its type is the same as the type of the let. *)
+         and continue the computation on another one. *)
       let lexprs =
         List.fold_left
           (* fold_left because bindings is in reversed order. *)
@@ -159,7 +157,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
                (ie. [fun_args]) with the type found (ie. [t_args]). *)
             List.iter2
               (fun cst_t (arg_exp, _, arg_t, _) ->
-                expr_unify_wrapped cst_t arg_t arg_exp)
+                expr_unify_wrapped lenv cst_t arg_t arg_exp)
               constr_args t_args;
             (* We convert the tuple (kind, typ) to an expression *)
             let args_exprs =
@@ -173,7 +171,9 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
             in
             (* We apply sigma to each type of the symbol declaration to compute
                the argument of the symbol. *)
-            let data_typ = List.map (fun x -> SMap.find x sigma) decl.tvars in
+            let data_typ =
+              List.map (fun x -> Hashtbl.find sigma x) decl.tvars
+            in
             (* Finally, we can build the TAst and the type ! *)
             let e = TConstructor (cst, args_exprs) in
             let t = TSymbol (decl.symbid, data_typ) in
@@ -189,7 +189,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       else
         (* args <> [] and the type of our variable cannot be a function (not
            supported for now), so error ! *)
-        TypingError.variable_not_a_function fn t (List.length args) expr
+        TypingError.variable_not_a_function lenv fn t (List.length args) expr
   | AppFun (fn, args) -> (
       match SMap.find_opt fn genv.fundecls with
       | Some decl ->
@@ -219,7 +219,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
                (ie. [fun_args]) with the type found (ie. [t_args]). *)
             List.iter2
               (fun cst_t (arg_exp, _, arg_t, _) ->
-                expr_unify_wrapped cst_t arg_t arg_exp)
+                expr_unify_wrapped lenv cst_t arg_t arg_exp)
               fun_args t_args;
             (* We convert each tuple (kind, typ) to an expression *)
             let args_exprs =
@@ -251,7 +251,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
           (fun (_, e) (_, pat_var_env) ->
             let lenv = { lenv with vartype = pat_var_env } in
             let ei_expr, ei_typ, ei_i2r = compute_expr_type genv lenv e in
-            expr_unify_wrapped case_t ei_typ e;
+            expr_unify_wrapped lenv case_t ei_typ e;
             (make_expr ei_expr ei_typ, ei_i2r))
           p pat_vars
       in
