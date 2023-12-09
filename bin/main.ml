@@ -1,15 +1,11 @@
-let pp_error_head ppf
-    ((beg_pos, end_pos) : Lexing.position * Lexing.position option) =
-  let begin_col = beg_pos.pos_cnum - beg_pos.pos_bol in
-  let end_col =
-    match end_pos with
-    | Some pos -> pos.pos_cnum - pos.pos_bol
-    | None -> begin_col + 1
-  in
+open MiniPureScriptLib
+
+let pp_error_head ppf (pos : Ast.position) =
+  let begin_col, end_col = (pos.beg_col, pos.end_col) in
   (* in VScode, lines start at 1, not 0 :/ *)
-  (* let begin_col, end_col = (begin_col + 1, end_col + 1) in *)
-  Format.fprintf ppf "File \"%s\", line %i, characters %i-%i:" beg_pos.pos_fname
-    beg_pos.pos_lnum begin_col end_col
+  let begin_col, end_col = (begin_col + 1, end_col + 1) in
+  Format.fprintf ppf "File \"%s\", line %i-%i, characters %i-%i:" pos.file
+    pos.beg_line pos.end_line begin_col end_col
 
 let usage_msg = "Usage: ppurse [ --parse-only | --type-only | --help ] <file>\n"
 let type_only = ref false
@@ -42,8 +38,6 @@ let in_file =
       exit error
   | Some f -> f
 
-open MiniPureScriptLib
-
 let () =
   try
     let in_chan = open_in in_file in
@@ -55,19 +49,17 @@ let () =
       if !parse_only then exit 0
       else (
         ignore prog;
-        let typ_prog = Typing.check_program false prog in
+        let typ_prog = Typing.check_program true prog in
         if !type_only then exit 0 else ignore typ_prog)
     with
-    | Lexer.LexingError (terr, p) ->
-        Format.eprintf "%a@.%s@." pp_error_head (p, None) terr;
+    | Lexer.LexingError (terr, pos)
+    | Ast.UnexpectedText (terr, pos)
+    | TypingError.TypeError (terr, pos) ->
+        Format.eprintf "%a@.%s@." pp_error_head pos terr;
         exit file_invalid_code
     | Parser.Error ->
         Format.eprintf "%a@.Syntax Error.@." pp_error_head
-          (Lexing.lexeme_start_p lexbuf, Some (Lexing.lexeme_end_p lexbuf));
-        exit file_invalid_code
-    | ParserError.UnexpectedText (terr, bp, ep)
-    | TypingError.TypeError (terr, bp, ep) ->
-        Format.eprintf "%a@.%s@." pp_error_head (bp, Some ep) terr;
+          (Ast.lexbuf_to_pos lexbuf);
         exit file_invalid_code
   with Sys_error s ->
     Format.eprintf "%s@." s;

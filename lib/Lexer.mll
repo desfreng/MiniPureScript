@@ -1,45 +1,46 @@
 {
-open Parser
+open Tokens
+open Ast
 
-type pretoken = { t : token; col : int }
+type pretoken = { t : token; pos : position }
 
-exception LexingError of string * Lexing.position
-(** Excpetion throw on lexing error *)
+exception LexingError of string * position
+(** Exception throw on lexing error *)
+
 
 let illegal_char c lexbuf =
   let txt =
     Format.sprintf "Illegal character '%c' (code: %#x)." c (Char.code c)
   in
-  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
+  raise (LexingError (txt, lexbuf_to_pos lexbuf))
 
 let too_large_int int_str lexbuf =
   let txt = Format.sprintf "Integer constant too large '%s'." int_str in
-  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
+  raise (LexingError (txt, lexbuf_to_pos lexbuf))
 
 let illegal_str_lf lexbuf =
-  raise
-    (LexingError ("Illegal line feed in string.", Lexing.lexeme_start_p lexbuf))
+  raise (LexingError ("Illegal line feed in string.", lexbuf_to_pos lexbuf))
 
 let unterminated_str lexbuf =
   raise
-    (LexingError
-       ("Non terminating string definition.", Lexing.lexeme_start_p lexbuf))
+    (LexingError ("Non terminating string definition.", lexbuf_to_pos lexbuf))
 
 let unterminated_str_gap lexbuf =
-  raise
-    (LexingError ("Non terminating string gap.", Lexing.lexeme_start_p lexbuf))
+  raise (LexingError ("Non terminating string gap.", lexbuf_to_pos lexbuf))
 
 let illegal_char_gap c lexbuf =
   let txt =
     Format.sprintf "Illegal character in string gap '%c' (code: %#x).@." c
       (Char.code c)
   in
-  raise (LexingError (txt, Lexing.lexeme_start_p lexbuf))
+  raise (LexingError (txt, lexbuf_to_pos lexbuf))
 
-(** Compute the current column of the lexing buffer *)
-let col lexbuf =
-  let beg_pos = Lexing.lexeme_start_p lexbuf in
-  beg_pos.pos_cnum - beg_pos.pos_bol
+
+let mk_pretok t lexbuf = { t; pos = lexbuf_to_pos lexbuf }
+
+let mk_pretok_merge t beg_p end_p = { t; pos = merge_pos beg_p end_p }
+let eof lexbuf = { t = EOF; pos = eof_pos lexbuf }
+
 
 (** A function to convert any lindent in keyword if necessary *)
 let find_keyword =
@@ -67,7 +68,7 @@ let find_keyword =
     ];
   fun s lexbuf ->
   let t = try Hashtbl.find kw_tbl s with Not_found -> LINDENT s in
-  { t; col = col lexbuf }
+  mk_pretok t lexbuf
 
 
 (** We store string constant in there *)
@@ -86,47 +87,49 @@ let integer = '0' | ['1'-'9'] digit*
 rule gen_pretokens = parse
   | '\n'            { Lexing.new_line lexbuf; gen_pretokens lexbuf }
   | ' ' | '\t'      { gen_pretokens lexbuf }
-  | eof             { { t = EOF; col = -1 } }
+  | eof             { eof lexbuf }
 
   | lindent as s    { find_keyword s lexbuf }
-  | uindent as s    { { t = UINDENT s; col = col lexbuf } }
-  | integer as s    { let col = col lexbuf in
+  | uindent as s    { mk_pretok (UINDENT s) lexbuf }
+
+  | integer as s    { let pos = lexbuf_to_pos lexbuf in
                       let i = match int_of_string_opt s with
                               | Some i -> i
                               | None -> too_large_int s lexbuf
-                      in { t = INT_CST i; col } }
+                      in { t = INT_CST i; pos } }
 
-  | '"'             { let col = col lexbuf in
+  | '"'             { let beg_pos = lexbuf_to_pos lexbuf in
                       let s = string_cst lexbuf in
-                      { t = STR_CST s; col } }
+                      let end_pos = lexbuf_to_pos lexbuf in
+                      mk_pretok_merge (STR_CST s) beg_pos end_pos }
 
   (* Expressions *)
-  | "("             { { t = LPAR; col = col lexbuf } }
-  | ")"             { { t = RPAR; col = col lexbuf } }
-  | "="             { { t = EQ_SIGN; col = col lexbuf } }
+  | "("             { mk_pretok LPAR lexbuf }
+  | ")"             { mk_pretok RPAR lexbuf }
+  | "="             { mk_pretok EQ_SIGN lexbuf }
 
   (* Operators *)
-  | "=="            { { t = EQ; col = col lexbuf } }
-  | "/="            { { t = NOT_EQ; col = col lexbuf } }
-  | '<'             { { t = LT; col = col lexbuf } }
-  | "<="            { { t = LE; col = col lexbuf } }
-  | '>'             { { t = GT; col = col lexbuf } }
-  | ">="            { { t = GE; col = col lexbuf } }
-  | '+'             { { t = PLUS; col = col lexbuf } }
-  | '-'             { { t = MINUS; col = col lexbuf } }
-  | '*'             { { t = MUL; col = col lexbuf } }
-  | '/'             { { t = DIV; col = col lexbuf } }
-  | "<>"            { { t = CONCAT; col = col lexbuf } }
-  | "&&"            { { t = AND; col = col lexbuf } }
-  | "||"            { { t = OR; col = col lexbuf } }
+  | "=="            { mk_pretok EQ lexbuf }
+  | "/="            { mk_pretok NOT_EQ lexbuf }
+  | '<'             { mk_pretok LT lexbuf }
+  | "<="            { mk_pretok LE lexbuf }
+  | '>'             { mk_pretok GT lexbuf }
+  | ">="            { mk_pretok GE lexbuf }
+  | '+'             { mk_pretok PLUS lexbuf }
+  | '-'             { mk_pretok MINUS lexbuf }
+  | '*'             { mk_pretok MUL lexbuf }
+  | '/'             { mk_pretok DIV lexbuf }
+  | "<>"            { mk_pretok CONCAT lexbuf }
+  | "&&"            { mk_pretok AND lexbuf }
+  | "||"            { mk_pretok OR lexbuf }
 
   (* Typing *)
-  | "->"            { { t = ARROW; col = col lexbuf } }
-  | "=>"            { { t = EQRARROW; col = col lexbuf } }
-  | "::"            { { t = DOUBLECOLON; col = col lexbuf } }
-  | '.'             { { t = PERIOD; col = col lexbuf } }
-  | ','             { { t = COMMA; col = col lexbuf } }
-  | '|'             { { t = PIPE; col = col lexbuf } }
+  | "->"            { mk_pretok ARROW lexbuf }
+  | "=>"            { mk_pretok EQRARROW lexbuf }
+  | "::"            { mk_pretok DOUBLECOLON lexbuf }
+  | '.'             { mk_pretok PERIOD lexbuf }
+  | ','             { mk_pretok COMMA lexbuf }
+  | '|'             { mk_pretok PIPE lexbuf }
 
   (* Comments *)
   | "{-"            { multi_line_comment lexbuf; gen_pretokens lexbuf }

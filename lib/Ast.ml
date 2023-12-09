@@ -1,4 +1,12 @@
-type 'a pos = { v : 'a; beg_pos : Lexing.position; end_pos : Lexing.position }
+type position = {
+  beg_line : int;
+  beg_col : int;
+  end_line : int;
+  end_col : int;
+  file : string;
+}
+
+type 'a pos = { v : 'a; pos : position }
 
 type typ = typ_kind pos
 and typ_kind = AstTVar of string | AstTData of string * typ list
@@ -71,3 +79,35 @@ and decl_kind =
       * decl list (* fun decl list *)
 
 type program = decl list
+
+let lexloc_to_pos (pos : Lexing.position * Lexing.position) =
+  let beg_p, end_p = pos in
+  let file = beg_p.pos_fname in
+  let beg_col = beg_p.pos_cnum - beg_p.pos_bol in
+  let end_col = end_p.pos_cnum - end_p.pos_bol in
+  {
+    beg_line = beg_p.pos_lnum;
+    beg_col;
+    end_line = end_p.pos_lnum;
+    end_col;
+    file;
+  }
+
+let lexbuf_to_pos lexbuf =
+  lexloc_to_pos (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)
+
+let merge_pos p1 p2 = { p1 with end_line = p2.end_line; end_col = p2.end_col }
+
+let eof_pos lexbuf =
+  let pos = lexbuf_to_pos lexbuf in
+  { pos with end_col = -1; beg_col = -1 }
+
+exception UnexpectedText of string * position
+
+let assert_text_is (token_text, pos) text =
+  if token_text <> text then
+    raise
+      (UnexpectedText
+         ( Format.sprintf "Unexpected text : '%s'. Expected : '%s'" token_text
+             text,
+           pos ))

@@ -5,7 +5,7 @@ type pat_matrix = {
   pat_rows : (tpattern list * texpr) list;
 }
 
-exception NotExhaustive
+exception NonExhaustive
 
 (** [get_fields genv expr cst_id] returns the list of expression corresponding
     to each field of [expr] and the list of their type in the case that [expr]
@@ -140,23 +140,27 @@ let build_submat genv m =
 
 let rec f genv typ m =
   match (m.scrutineers, m.pat_rows) with
-  | _, [] -> raise NotExhaustive
+  | _, [] -> raise NonExhaustive
   | [], (_, act) :: _ -> act
   | e :: _, _ ->
       let constr_set = pat_constr_set genv e.expr_typ in
       let constr_mat, otherwise_mat = build_submat genv m in
-      let branch_expr = PatConstrMap.map (f genv typ) constr_mat in
 
       (* An otherwise branch is not mandatory when the set of
          "pattern constructors" of the type (ie. [constr_set]) is equal to the
          set of pattern constructors with a pattern matrix
          (ie. keys of [constr_mat]). *)
-      if
+      let otherwise_ignored =
         (not (PatConstrSet.is_empty constr_set))
         && PatConstrSet.for_all
              (fun cst -> PatConstrMap.mem cst constr_mat)
              constr_set
-      then { expr = TContructorCase (e, branch_expr, None); expr_typ = typ }
+      in
+
+      let branch_expr = PatConstrMap.map (f genv typ) constr_mat in
+
+      if otherwise_ignored then
+        { expr = TContructorCase (e, branch_expr, None); expr_typ = typ }
       else
         let otherwise_expr = f genv typ otherwise_mat in
         {
@@ -173,10 +177,10 @@ let compile_case genv typ e pats actions pos =
         scrutineers = [ e ];
         pat_rows = List.map2 (fun p act -> ([ p ], act)) pats actions;
       }
-  with NotExhaustive -> TypingError.not_exhaustive_case pos
+  with NonExhaustive -> TypingError.not_exhaustive_case pos
 
 (** [compile_function genv typ e pats actions] compiles the case statement over [e]
       with pattern [pats] and actions [actions] of type [typ] to an expression. *)
 let compile_function genv typ scrutineers pat_rows fname decl_list =
   try f genv typ { scrutineers; pat_rows }
-  with NotExhaustive -> TypingError.not_exhaustive_fun fname decl_list
+  with NonExhaustive -> TypingError.not_exhaustive_fun fname decl_list

@@ -3,8 +3,16 @@
 (ocamllex
  (modules Lexer))
 
+; Compile tokens.mly into a definition of the type [token].
+
 (menhir
- (modules Parser))
+ (modules Tokens)
+ (flags --only-tokens))
+
+(menhir
+ (modules Tokens Parser)
+ (merge_into Parser)
+ (flags --external-tokens Tokens))
 
 (library
  (name MiniPureScriptLib))

@@ -8,78 +8,12 @@ let split_typ_list =
     | hd::tl -> f (hd::acc) tl
   in f []
 
+let mk_ast v pos =
+  let beg_pos = lexloc_to_pos pos in
+  let pos = merge_pos beg_pos (PostLexer.last_pos_emmited ()) in
+  { v; pos }
+
 %}
-
-%token EOF
-
-// Keywords
-%token CASE                 "case"
-%token CLASS                "class"
-%token DATA                 "data"
-%token DO                   "do"
-%token ELSE                 "else"
-%token FALSE                "false"
-%token FORALL               "forall"
-%token IF                   "if"
-%token IMPORT               "import"
-%token IN                   "in"
-%token INSTANCE             "instance"
-%token LET                  "let"
-%token MODULE               "module"
-%token OF                   "of"
-%token THEN                 "then"
-%token TRUE                 "true"
-%token WHERE                "where"
-
-// Tokens with data
-%token <string> LINDENT
-%token <string> UINDENT
-%token <string> STR_CST
-%token <int> INT_CST
-
-// Expressions
-%token LPAR                 "("
-%token RPAR                 ")"
-%token EQ_SIGN              "="
-
-// Operators
-%token EQ                   "=="
-%token NOT_EQ               "/="
-%token LT                   "<"
-%token LE                   "<="
-%token GT                   ">"
-%token GE                   ">="
-%token PLUS                 "+"
-%token MINUS                "-"
-%token MUL                  "*"
-%token DIV                  "/"
-%token CONCAT               "<>"
-%token AND                  "&&"
-%token OR                   "||"
-
-// Typing
-%token ARROW                "->"
-%token EQRARROW             "=>"
-%token DOUBLECOLON          "::"
-%token PERIOD               "."
-%token COMMA                ","
-%token PIPE                 "|"
-
-// Code blocks
-%token LACC                 "{"
-%token RACC                 "}"
-%token SEMICOLON            ";"
-
-
-// Precedences
-
-%nonassoc "in" "else"
-%left "||"
-%left "&&"
-%nonassoc "==" "/=" ">" ">=" "<" "<="
-%left "+" "-" "<>"
-%left "*" "/"
-%nonassoc U_MINUS
 
 %start file
 
@@ -87,50 +21,50 @@ let split_typ_list =
 
 %%
 // A simple symbol, used to check the value of the UIndent  (see `file` symbol)
-%inline uindent_text: t=UINDENT { (t, $startpos, $endpos) }
+%inline uindent_text: t=UINDENT { (t, lexloc_to_pos $loc) }
 
 file:
-"module" m=uindent_text "where" "{" imports d=separated_nonempty_list(";", decls) "}" EOF { ParserError.assert_text_is m "Main"; d }
+"module" m=uindent_text "where" "{" imports d=separated_nonempty_list(";", decls) "}" EOF { assert_text_is m "Main"; d }
 
 imports:
 "import" p=uindent_text ";"
 "import" ef=uindent_text ";"
-"import" efc=uindent_text ";" { ParserError.assert_text_is p   "Prelude";
-                                ParserError.assert_text_is ef  "Effect";
-                                ParserError.assert_text_is efc "Effect.Console" }
+"import" efc=uindent_text ";" { assert_text_is p   "Prelude";
+                                assert_text_is ef  "Effect";
+                                assert_text_is efc "Effect.Console" }
 decls:
 | f=defn    { f }
 | t=tdecl   { t }
 | "data" t=UINDENT arg=LINDENT* "=" l=separated_nonempty_list("|", constr_def)
-    { { v=Data (t, arg, l); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (Data (t, arg, l)) $loc }
 
 | "class" c=UINDENT arg=LINDENT* "where" "{" l=separated_list(";", tdecl) "}"
-    { { v=Class (c, arg, l); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (Class (c, arg, l)) $loc }
 
 | "instance" i=instance "where" "{" l=separated_list(";", defn) "}"
-    { { v=Instance (i, l); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (Instance (i, l)) $loc }
 
 %inline constr_def: c=UINDENT arg=atype* { (c, arg) }
 
 defn: f=LINDENT p=patarg* "=" e=expr
-    { { v=FunDecl (f, p, e); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (FunDecl (f, p, e)) $loc }
 
 tdecl:
 | f=LINDENT "::" t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        { v=TypeDecl (f, [], [], arg, ret); beg_pos=$startpos; end_pos=$endpos; } }
+        mk_ast (TypeDecl (f, [], [], arg, ret)) $loc }
 
 | f=LINDENT "::" "forall" l=LINDENT+ "." t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        { v=TypeDecl (f, l, [], arg, ret); beg_pos=$startpos; end_pos=$endpos; } }
+        mk_ast (TypeDecl (f, l, [], arg, ret)) $loc }
 
 | f=LINDENT "::" c=class_list t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        { v=TypeDecl (f, [], c, arg, ret); beg_pos=$startpos; end_pos=$endpos; } }
+        mk_ast (TypeDecl (f, [], c, arg, ret)) $loc }
 
 | f=LINDENT "::" "forall" l=LINDENT+ "." c=class_list t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        { v=TypeDecl (f, l, c, arg, ret); beg_pos=$startpos; end_pos=$endpos; } }
+        mk_ast (TypeDecl (f, l, c, arg, ret)) $loc }
 
 
 class_list:
@@ -150,53 +84,53 @@ instance:
 
 cio_decl:
 | cstr=UINDENT arg=atype*
-    { { v=CoI_Decl (cstr, arg); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (CoI_Decl (cstr, arg)) $loc }
 
 atype:
-| c=UINDENT         { { v=AstTData (c, []); beg_pos=$startpos; end_pos=$endpos; } }
+| c=UINDENT         { mk_ast (AstTData (c, [])) $loc }
 | t=non_const_type  { t }
 
 typ:
 | t=non_const_type
     { t }
 | cstr=UINDENT arg=atype*
-    { { v=AstTData (cstr, arg); beg_pos=$startpos; end_pos=$endpos; } }
+    { mk_ast (AstTData (cstr, arg)) $loc }
 
 non_const_type:
-| v=LINDENT         { { v=AstTVar v; beg_pos=$startpos; end_pos=$endpos; } }
+| v=LINDENT         { mk_ast (AstTVar v) $loc }
 | "(" t=typ ")"     { t }
 
 
 pattern:
 | p=patarg            { p }
 | c=UINDENT arg=patarg+
-                      { { v=PatConstructor (c, arg); beg_pos=$startpos; end_pos=$endpos } }
+                      { mk_ast (PatConstructor (c, arg)) $loc }
 
 
 patarg:
-| c=constant          { { v=PatConstant c; beg_pos=$startpos; end_pos=$endpos } }
-| v=LINDENT           { { v=PatVariable v; beg_pos=$startpos; end_pos=$endpos } }
+| c=constant          { mk_ast (PatConstant c) $loc }
+| v=LINDENT           { mk_ast (PatVariable v) $loc }
 // An Uindent can only be a "zeroary" Constructor
 // because we have no record in MiniPureScript
-| c=UINDENT           { { v=PatConstructor (c, []); beg_pos=$startpos; end_pos=$endpos } }
+| c=UINDENT           { mk_ast (PatConstructor (c, [])) $loc }
 | "(" p=pattern ")"   { p }
 
 
 constant:
-| "true"      { { v=True; beg_pos=$startpos; end_pos=$endpos } }
-| "false"     { { v=False; beg_pos=$startpos; end_pos=$endpos } }
-| i=INT_CST   { { v=Int i; beg_pos=$startpos; end_pos=$endpos } }
-| s=STR_CST   { { v=Str s; beg_pos=$startpos; end_pos=$endpos } }
+| "true"      { mk_ast (True) $loc }
+| "false"     { mk_ast (False) $loc }
+| i=INT_CST   { mk_ast (Int i) $loc }
+| s=STR_CST   { mk_ast (Str s) $loc }
 
 
 atom:
-| c=constant                { { v=ExprConstant c; beg_pos=$startpos; end_pos=$endpos } }
-| v=LINDENT                 { { v=ExprVar v; beg_pos=$startpos; end_pos=$endpos } }
+| c=constant                { mk_ast (ExprConstant c) $loc }
+| v=LINDENT                 { mk_ast (ExprVar v) $loc }
 // An Uindent can only be a "zeroary" Constructor
 // because we have no record in MiniPureScript
-| c=UINDENT                 { { v=AppConstr (c, []); beg_pos=$startpos; end_pos=$endpos } }
+| c=UINDENT                 { mk_ast (AppConstr (c, [])) $loc }
 | "(" e=expr ")"            { e }
-| "(" e=expr "::" t=typ ")" { { v=WithType (e, t); beg_pos=$startpos; end_pos=$endpos } }
+| "(" e=expr "::" t=typ ")" { mk_ast (WithType (e, t)) $loc }
 
 
 expr:
@@ -204,28 +138,28 @@ expr:
     { a }
 
 | "-" e=expr
-    { { v=Neg e; beg_pos=$startpos; end_pos=$endpos } } %prec U_MINUS
+    { mk_ast (Neg e) $loc } %prec U_MINUS
 
 | l=expr op=binop r=expr
-    { { v=BinOp (l, op, r); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (BinOp (l, op, r)) $loc }
 
 | f=LINDENT arg=atom+
-    { { v=AppFun (f, arg); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (AppFun (f, arg)) $loc }
 
 | f=UINDENT arg=atom+
-    { { v=AppConstr (f, arg); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (AppConstr (f, arg)) $loc }
 
 | "if" c=expr "then" tb=expr "else" tf=expr
-    { { v=If (c, tb, tf); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (If (c, tb, tf)) $loc }
 
 | "do" "{" l=separated_nonempty_list(";", expr) "}"
-    { { v=Block l; beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (Block l) $loc }
 
 | "let" "{" bl=separated_nonempty_list(";", binding) "}" "in" e=expr
-    { { v=Let (bl, e); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (Let (bl, e)) $loc }
 
 | "case" e=expr "of" "{" bl=separated_nonempty_list(";", branch) "}"
-    { { v=Case (e, bl); beg_pos=$startpos; end_pos=$endpos } }
+    { mk_ast (Case (e, bl)) $loc }
 
 
 %inline binding: v=LINDENT "=" e=expr{ (v, e) }
