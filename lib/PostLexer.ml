@@ -73,4 +73,4 @@ let next_token lexbuf =
   (match pos with None -> () | Some p -> _last_pos := p);
   tok
 
-let last_pos_emmited () = !_last_pos
+let last_pos () = !_last_pos

@@ -1,5 +1,6 @@
 %{
 open Ast
+open PostLexer
 
 let split_typ_list =
   let rec f acc = function
@@ -8,9 +9,14 @@ let split_typ_list =
     | hd::tl -> f (hd::acc) tl
   in f []
 
+
 let mk_ast v pos =
-  let beg_pos = lexloc_to_pos pos in
-  let pos = merge_pos beg_pos (PostLexer.last_pos_emmited ()) in
+  let pos = lexloc_to_pos pos in
+  { v; pos }
+
+
+let mk_ast_l v pos =
+  let pos = merge_pos (lexloc_to_pos pos) (last_pos ()) in
   { v; pos }
 
 %}
@@ -36,35 +42,35 @@ decls:
 | f=defn    { f }
 | t=tdecl   { t }
 | "data" t=UINDENT arg=LINDENT* "=" l=separated_nonempty_list("|", constr_def)
-    { mk_ast (Data (t, arg, l)) $loc }
+    { mk_ast_l (Data (t, arg, l)) $loc }
 
 | "class" c=UINDENT arg=LINDENT* "where" "{" l=separated_list(";", tdecl) "}"
-    { mk_ast (Class (c, arg, l)) $loc }
+    { mk_ast_l (Class (c, arg, l)) $loc }
 
 | "instance" i=instance "where" "{" l=separated_list(";", defn) "}"
-    { mk_ast (Instance (i, l)) $loc }
+    { mk_ast_l (Instance (i, l)) $loc }
 
 %inline constr_def: c=UINDENT arg=atype* { (c, arg) }
 
 defn: f=LINDENT p=patarg* "=" e=expr
-    { mk_ast (FunDecl (f, p, e)) $loc }
+    { mk_ast_l (FunDecl (f, p, e)) $loc }
 
 tdecl:
 | f=LINDENT "::" t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        mk_ast (TypeDecl (f, [], [], arg, ret)) $loc }
+        mk_ast_l (TypeDecl (f, [], [], arg, ret)) $loc }
 
 | f=LINDENT "::" "forall" l=LINDENT+ "." t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        mk_ast (TypeDecl (f, l, [], arg, ret)) $loc }
+        mk_ast_l (TypeDecl (f, l, [], arg, ret)) $loc }
 
 | f=LINDENT "::" c=class_list t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        mk_ast (TypeDecl (f, [], c, arg, ret)) $loc }
+        mk_ast_l (TypeDecl (f, [], c, arg, ret)) $loc }
 
 | f=LINDENT "::" "forall" l=LINDENT+ "." c=class_list t=separated_nonempty_list("->", typ)
     { let arg, ret = split_typ_list t in
-        mk_ast (TypeDecl (f, l, c, arg, ret)) $loc }
+        mk_ast_l (TypeDecl (f, l, c, arg, ret)) $loc }
 
 
 class_list:
@@ -84,7 +90,7 @@ instance:
 
 cio_decl:
 | cstr=UINDENT arg=atype*
-    { mk_ast (CoI_Decl (cstr, arg)) $loc }
+    { mk_ast_l (CoI_Decl (cstr, arg)) $loc }
 
 atype:
 | c=UINDENT         { mk_ast (AstTData (c, [])) $loc }
@@ -94,7 +100,7 @@ typ:
 | t=non_const_type
     { t }
 | cstr=UINDENT arg=atype*
-    { mk_ast (AstTData (cstr, arg)) $loc }
+    { mk_ast_l (AstTData (cstr, arg)) $loc }
 
 non_const_type:
 | v=LINDENT         { mk_ast (AstTVar v) $loc }
@@ -130,7 +136,7 @@ atom:
 // because we have no record in MiniPureScript
 | c=UINDENT                 { mk_ast (AppConstr (c, [])) $loc }
 | "(" e=expr ")"            { e }
-| "(" e=expr "::" t=typ ")" { mk_ast (WithType (e, t)) $loc }
+| "(" e=expr "::" t=typ ")" { mk_ast_l (WithType (e, t)) $loc }
 
 
 expr:
@@ -138,28 +144,28 @@ expr:
     { a }
 
 | "-" e=expr
-    { mk_ast (Neg e) $loc } %prec U_MINUS
+    { mk_ast_l (Neg e) $loc } %prec U_MINUS
 
 | l=expr op=binop r=expr
-    { mk_ast (BinOp (l, op, r)) $loc }
+    { mk_ast_l (BinOp (l, op, r)) $loc }
 
 | f=LINDENT arg=atom+
-    { mk_ast (AppFun (f, arg)) $loc }
+    { mk_ast_l (AppFun (f, arg)) $loc }
 
 | f=UINDENT arg=atom+
-    { mk_ast (AppConstr (f, arg)) $loc }
+    { mk_ast_l (AppConstr (f, arg)) $loc }
 
 | "if" c=expr "then" tb=expr "else" tf=expr
-    { mk_ast (If (c, tb, tf)) $loc }
+    { mk_ast_l (If (c, tb, tf)) $loc }
 
 | "do" "{" l=separated_nonempty_list(";", expr) "}"
-    { mk_ast (Block l) $loc }
+    { mk_ast_l (Block l) $loc }
 
 | "let" "{" bl=separated_nonempty_list(";", binding) "}" "in" e=expr
-    { mk_ast (Let (bl, e)) $loc }
+    { mk_ast_l (Let (bl, e)) $loc }
 
 | "case" e=expr "of" "{" bl=separated_nonempty_list(";", branch) "}"
-    { mk_ast (Case (e, bl)) $loc }
+    { mk_ast_l (Case (e, bl)) $loc }
 
 
 %inline binding: v=LINDENT "=" e=expr{ (v, e) }

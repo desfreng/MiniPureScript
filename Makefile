@@ -8,7 +8,7 @@ clean:
 	dune clean
 	rm -f ppurse
 
-parse_test: ppurse
+parsing_test: ppurse
 	cd test-files && bash ./test -1 ../ppurse
 
 typing_test: ppurse

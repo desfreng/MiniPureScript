@@ -3,8 +3,6 @@
 (ocamllex
  (modules Lexer))
 
-; Compile tokens.mly into a definition of the type [token].
-
 (menhir
  (modules Tokens)
  (flags --only-tokens))
@@ -15,8 +13,4 @@
  (flags --external-tokens Tokens))
 
 (library
- (name MiniPureScriptLib))
-
-; (env
-;  (dev
-;   (flags :standard -warn-error -27-32-69-34-37)))
+ (name PetitPureScript))

@@ -1,0 +1,148 @@
+\documentclass[french, 12pt]{article}
+\usepackage[a4paper, top=1cm, bottom=2cm, left=1cm, right=1cm]{geometry}
+
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage[indent]{parskip}
+\usepackage[bottom]{footmisc}
+\usepackage{minted}
+\usepackage{calc}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\newcommand{\ps}{\textsf{Purescript}}
+\newcommand{\pps}{\textsf{Petit Purescript}}
+
+\title{{\large Projet de Compilation}\\\pps}
+\author{Gabriel Desfrene}
+\begin{document}
+\maketitle
+
+\section*{Organisation}
+Ce projet utilise \textsf{dune}\footnote{\url{https://dune.build/}} comme moteur
+de production.
+Le code du compilateur \pps{} est séparé en deux parties :
+\begin{itemize}
+    \item Une bibliothèque \textsf{PetitPureScript}, dont les sources se trouvent
+          dans le répertoire \texttt{lib}.
+    \item Le compilateur \textsf{ppurse}, dont les sources sont localisées dans
+          le répertoire \texttt{bin}.
+\end{itemize}
+
+\section*{Compilateur \textsf{ppurse}}
+Ce programme accepte les options suivantes :
+\begin{description}[font=\normalfont, leftmargin=!, labelwidth=\widthof{\texttt{----permissive}}]
+    \item[\texttt{----help}] affiche l'aide pour l'utilisation de ce compilateur.
+    \item[\texttt{----parse-only}] stoppe le compilateur après l'analyse
+        syntaxique du fichier d'entrée.
+    \item[\texttt{----type-only}] stoppe le compilateur après l'analyse
+        sémantique du fichier d'entrée.
+    \item[\texttt{----permissive}] autorise la définition de fonction avec des
+        motifs de filtrages quelconques sur tous les arguments.
+\end{description}
+
+Le compilateur termine avec le code de sortie $0$ lorsque aucune erreur n'est
+remarquée. Un code de sortie $1$ signale une erreur lors de l'analyse du fichier
+d'entrée. Un code de sortie $2$ marque une erreur interne du compilateur.
+
+\section*{Bibliothèque \textsf{PetitPureScript}}
+Cette bibliothèque s'occupe d'implémenter et de définir toutes les structures
+nécessaires à l'implémentation du compilateur \textsf{ppurse}.
+
+\subsection*{Analyse lexicale}
+
+L'analyse lexicale est opérée à l'aide de l'outil \textsf{ocamllex}%
+\footnote{\url{https://v2.ocaml.org/manual/lexyacc.html}} au sein du fichier
+\verb|Lexer.mll|. Aucun problème n'a été rencontré lors de cette partie.
+Dans la suite de ce rapport ainsi qu'au sein du code de ce projet, les
+lexèmes renvoyés par l'analyseur lexical sont appelés \emph{pretokens}. Ce
+sont des lexèmes étiquetés par une position.
+
+L'ajout des lexèmes factices \verb|{|, \verb|}| et \verb|;| est réalisé au sein
+du fichier \verb|PostLexer.ml|. Ce fichier implémente l'algorithme proposé dans
+le sujet. Une fonction \verb|last_pos| est implémenté afin d'obtenir la position
+du dernier lexème retourné.
+
+\subsection*{Analyse syntaxique}
+L'analyse syntaxique est opérée à l'aide de l'outil \textsf{Menhir}%
+\footnote{\url{http://gallium.inria.fr/~fpottier/menhir}}. Le fichier
+\verb|Tokens.mly| défini les lexèmes ainsi que leurs priorités. Le fichier
+\verb|Parser.mly| s'occupe de construire l'arbre de syntaxe abstraite (AST)
+défini au sein du fichier \verb|Ast.ml|.
+
+La grammaire des types a été légèrement modifiée afin de supprimer des conflits
+\emph{reduce-reduce}. De plus, puisque les classes de type et les instances,
+qui partagent la même grammaire, ont un sens différent des types, un nouveau
+symbole a été introduit : \verb|cio_decl|%
+\footnote{\it Class or Instance declaration.}. On retrouve cette différence de
+type au sein de l'AST.
+
+Mis à part ces quelques remarques, aucune difficulté majeure n'a été rencontrée.
+
+\subsection*{Analyse sémantique}
+L'analyse sémantique est opérée au sein des fichiers du dossier \verb|lib/typing|.
+Lors de cette analyse, l'arbre de syntaxe abstraite produit à l'étape précédente
+est transformé en un nouveau, défini au sein du fichier \verb|TAst.ml|.
+
+La déclaration des types est réalisée de la manière suivante :
+\begin{minted}{ocaml}
+type ttyp =
+  | TQuantifiedVar of TQVar.t
+  | TVar of { id : TVar.t; mutable def : ttyp option }
+  | TSymbol of string * ttyp list
+\end{minted}
+
+Les variables de types sont séparés en deux possibilités :
+\begin{itemize}
+    \item Les variables de type universellement quantifiées : \verb|TQuantifiedVar|.
+          Ce sont les variables introduites lors des déclarations de fonctions,
+          de classes de types, d'instances ou de symbole de types.
+    \item Les variables de type unifiable : \verb|TVar|. Ce sont des variables
+          qui doivent être unifiée après leur introduction lors des appels de
+          fonction ou l'application de constructeurs.
+\end{itemize}
+
+L'analyse sémantique et le regroupement des déclarations est effectuée au sein
+du fichier \verb|Typing.ml|. L'analyse des expressions est effectuée dans le
+fichier \verb|ExpressionTyping.ml|. Les motifs de filtrages sont analysés et
+typés dans le fichier \verb|PatternTyping.ml|. Le fichier \verb|CommonTyping.ml|
+regroupe des déclarations utilisées par plusieurs fichiers.
+
+On remarque qu'en \ps{} le code de la \autoref{fig:ex} est correct. Alors que
+la variable \verb|x| est de type \verb|List 'a| lors de l'appel de la fonction
+\verb|log| à la ligne $15$, ce code est accepté. En effet, le type de la
+variable \verb|x| est résolu à la ligne suivante, \verb|x| est de type
+\verb|List Int|. Ce code illustre que la résolution des instances est réalisée
+après l'analyse de l'expression des fonctions. Cette résolution est effectuée
+au sein du fichier \verb|ResolveInstance.ml|.
+
+Le filtrage est compilé en un \emph{case} sur tous les constructeurs possibles
+du motif au sein du fichier \verb|CompileCase.ml|. Enfin, le fichier
+\verb|TypingError.ml| contient le code nécessaire à la production des erreurs
+rencontrée lors de l'analyse sémantique.
+
+\begin{figure}[H]
+    \begin{minted}[fontsize=\footnotesize,linenos]{haskell}
+module Main where
+
+import Prelude
+import Effect
+import Effect.Console
+
+data List a = Nil | Cons a (List a)
+
+instance Show a => Show (List a) where
+    show Nil = "[]"
+    show (Cons hd tl) = show hd <> "::" <> show tl
+
+main::Effect Unit
+main = let x = Nil in do
+    log (show x)    -- x est de type List 'a
+    (let y = Cons 1 x in log (show y))    -- qui est ici résolu en List Int
+    log (show y)
+    \end{minted}
+    \caption{Exemple \ps{}.}
+    \label{fig:ex}
+\end{figure}
+\end{document}
