@@ -2,7 +2,7 @@ open Ast
 open TAst
 
 type instance_to_resolve = {
-  gamma : local_env; (* The context in witch we need to resolve it *)
+  gamma : local_env; (* The context in which we need to resolve it *)
   i : instance; (* The instance to resolve *)
   expr : expr; (* The expression that lead to this resolution *)
 }
