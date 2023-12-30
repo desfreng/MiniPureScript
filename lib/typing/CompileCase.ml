@@ -1,9 +1,7 @@
 open TAst
 
-type pat_matrix = {
-  scrutineers : texpr list;
-  pat_rows : (tpattern list * texpr) list;
-}
+type pat_matrix =
+  {scrutineers: texpr list; pat_rows: (tpattern list * texpr) list}
 
 exception NonExhaustive
 
@@ -26,14 +24,14 @@ let get_fields genv expr cst_id =
         (* [sigma] maps the quantified variables in the symbol to those in the
            expression. *)
         let sigma = Hashtbl.create 17 in
-        List.iter2 (fun qvar typ -> Hashtbl.add sigma qvar typ) decl.tvars args;
+        List.iter2 (fun qvar typ -> Hashtbl.add sigma qvar typ) decl.tvars args ;
         (* [cst_args] is the list of the type of each argument of the constructor *)
         let cst_args = List.map (subst sigma) (SMap.find cst_id decl.constrs) in
         (* For each field, we create the expression that retrieve its value. *)
         ( List.mapi
-            (fun index t -> { expr = TGetField (expr, index); expr_typ = t })
-            cst_args,
-          cst_args )
+            (fun index t -> {expr= TGetField (expr, index); expr_typ= t})
+            cst_args
+        , cst_args )
 
 (** [constructor_mat genv m pat_cstr] returns the pattern matrix of the
     constructor [pat_cstr] built from the pattern matrix [m]. *)
@@ -44,7 +42,8 @@ let constructor_mat genv m pat_cstr =
     match m.scrutineers with
     | [] ->
         raise (Invalid_argument "The list of scrutineers must be non-empty.")
-    | hd :: tl -> (hd, tl)
+    | hd :: tl ->
+        (hd, tl)
   in
   (* [n_scrut] is the list of scrutineers of the new matrix
      [cstr_args_typ] is the type of each argument of the constructor *)
@@ -67,45 +66,47 @@ let constructor_mat genv m pat_cstr =
     List.fold_left
       (fun m pat_row ->
         match pat_row with
-        | [], _ -> assert false
+        | [], _ ->
+            assert false
         | pat :: pat_row, act -> (
-            match (pat.pat, pat_cstr) with
-            | TPatWildcard, _ ->
-                (* We add as many wildcard as needed to the new row *)
-                let new_pat_row =
-                  List.map
-                    (fun t -> { pat = TPatWildcard; pat_typ = t })
-                    cstr_args_typ
-                  @ pat_row
-                in
-                { m with pat_rows = (new_pat_row, act) :: m.pat_rows }
-            | TPatVar v, _ ->
-                (* We add as many wildcard as needed to the new row *)
-                let new_pat_row =
-                  List.map
-                    (fun t -> { pat = TPatWildcard; pat_typ = t })
-                    cstr_args_typ
-                  @ pat_row
-                in
-                (* We bind the variable "v" to the current scrutineer in the action *)
-                let new_act =
-                  { expr = TLet (v, scrut, act); expr_typ = pat.pat_typ }
-                in
-                { m with pat_rows = (new_pat_row, new_act) :: m.pat_rows }
-            | TPatConstant c, TConstantConstr c' when c = c' ->
-                { m with pat_rows = (pat_row, act) :: m.pat_rows }
-            | TPatConstant _, _ -> m (* not the good constant, we do nothing *)
-            | TPatConstructor (cstr, patl), TSymbolConstr cid when cid = cstr ->
-                (* We add the constructors pattern to the row *)
-                let new_pat_row = patl @ pat_row in
-                { m with pat_rows = (new_pat_row, act) :: m.pat_rows }
-            | TPatConstructor _, _ ->
-                m (* no the good symbol constructor, we do nothing *)))
-      { scrutineers = n_scrut; pat_rows = [] }
+          match (pat.pat, pat_cstr) with
+          | TPatWildcard, _ ->
+              (* We add as many wildcard as needed to the new row *)
+              let new_pat_row =
+                List.map
+                  (fun t -> {pat= TPatWildcard; pat_typ= t})
+                  cstr_args_typ
+                @ pat_row
+              in
+              {m with pat_rows= (new_pat_row, act) :: m.pat_rows}
+          | TPatVar v, _ ->
+              (* We add as many wildcard as needed to the new row *)
+              let new_pat_row =
+                List.map
+                  (fun t -> {pat= TPatWildcard; pat_typ= t})
+                  cstr_args_typ
+                @ pat_row
+              in
+              (* We bind the variable "v" to the current scrutineer in the action *)
+              let new_act =
+                {expr= TLet (v, scrut, act); expr_typ= pat.pat_typ}
+              in
+              {m with pat_rows= (new_pat_row, new_act) :: m.pat_rows}
+          | TPatConstant c, TConstantConstr c' when c = c' ->
+              {m with pat_rows= (pat_row, act) :: m.pat_rows}
+          | TPatConstant _, _ ->
+              m (* not the good constant, we do nothing *)
+          | TPatConstructor (cstr, patl), TSymbolConstr cid when cid = cstr ->
+              (* We add the constructors pattern to the row *)
+              let new_pat_row = patl @ pat_row in
+              {m with pat_rows= (new_pat_row, act) :: m.pat_rows}
+          | TPatConstructor _, _ ->
+              m (* no the good symbol constructor, we do nothing *) ) )
+      {scrutineers= n_scrut; pat_rows= []}
       m.pat_rows
   in
   (* We reverse the row to keep the row order (fold_left has reversed it) *)
-  { sub_mat with pat_rows = List.rev sub_mat.pat_rows }
+  {sub_mat with pat_rows= List.rev sub_mat.pat_rows}
 
 (** [build_submat genv m] builds the sub-matrix for each constructor of the
     first column of pattern in [m] *)
@@ -115,20 +116,24 @@ let build_submat genv m =
     List.fold_left
       (fun acc pat_row ->
         match pat_row with
-        | [], _ -> assert false
+        | [], _ ->
+            assert false
         | p :: _, _ -> (
-            match p.pat with
-            | TPatWildcard | TPatVar _ -> acc
-            | TPatConstant cst -> PatConstrSet.add (TConstantConstr cst) acc
-            | TPatConstructor (cst_id, _) ->
-                PatConstrSet.add (TSymbolConstr cst_id) acc))
+          match p.pat with
+          | TPatWildcard | TPatVar _ ->
+              acc
+          | TPatConstant cst ->
+              PatConstrSet.add (TConstantConstr cst) acc
+          | TPatConstructor (cst_id, _) ->
+              PatConstrSet.add (TSymbolConstr cst_id) acc ) )
       PatConstrSet.empty m.pat_rows
   in
   (* For each constructor we build its sub-matrix. *)
   let pat_cstr_mat =
     PatConstrSet.fold
       (fun pat_cstr pat_cstr_mat ->
-        PatConstrMap.add pat_cstr (constructor_mat genv m pat_cstr) pat_cstr_mat)
+        PatConstrMap.add pat_cstr (constructor_mat genv m pat_cstr) pat_cstr_mat
+        )
       cstrs_set PatConstrMap.empty
   in
   (* We compute the sub-matrix for the other cases. To do this, we use a
@@ -140,12 +145,13 @@ let build_submat genv m =
 
 let rec f genv typ m =
   match (m.scrutineers, m.pat_rows) with
-  | _, [] -> raise NonExhaustive
-  | [], (_, act) :: _ -> act
+  | _, [] ->
+      raise NonExhaustive
+  | [], (_, act) :: _ ->
+      act
   | e :: _, _ ->
       let constr_set = pat_constr_set genv e.expr_typ in
       let constr_mat, otherwise_mat = build_submat genv m in
-
       (* An otherwise branch is not mandatory when the set of
          "pattern constructors" of the type (ie. [constr_set]) is equal to the
          set of pattern constructors with a pattern matrix
@@ -156,31 +162,25 @@ let rec f genv typ m =
              (fun cst -> PatConstrMap.mem cst constr_mat)
              constr_set
       in
-
       let branch_expr = PatConstrMap.map (f genv typ) constr_mat in
-
       if otherwise_ignored then
-        { expr = TContructorCase (e, branch_expr, None); expr_typ = typ }
+        {expr= TContructorCase (e, branch_expr, None); expr_typ= typ}
       else
         let otherwise_expr = f genv typ otherwise_mat in
-        {
-          expr = TContructorCase (e, branch_expr, Some otherwise_expr);
-          expr_typ = typ;
-        }
+        { expr= TContructorCase (e, branch_expr, Some otherwise_expr)
+        ; expr_typ= typ }
 
 (** [compile_case genv typ e pats actions] compiles the case statement over [e]
       with pattern [pats] and actions [actions] of type [typ] to an expression. *)
 let compile_case genv typ e pats actions pos =
   try
     f genv typ
-      {
-        scrutineers = [ e ];
-        pat_rows = List.map2 (fun p act -> ([ p ], act)) pats actions;
-      }
+      { scrutineers= [e]
+      ; pat_rows= List.map2 (fun p act -> ([p], act)) pats actions }
   with NonExhaustive -> TypingError.not_exhaustive_case pos
 
 (** [compile_function genv typ e pats actions] compiles the case statement over [e]
       with pattern [pats] and actions [actions] of type [typ] to an expression. *)
 let compile_function genv typ scrutineers pat_rows fname decl_list =
-  try f genv typ { scrutineers; pat_rows }
+  try f genv typ {scrutineers; pat_rows}
   with NonExhaustive -> TypingError.not_exhaustive_fun fname decl_list

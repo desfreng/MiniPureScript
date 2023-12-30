@@ -15,24 +15,26 @@ let usage_msg =
   "Usage: ppurse [ --parse-only | --type-only | --help ] [ --permissive ] <file>\n"
 
 let type_only = ref false
+
 let parse_only = ref false
+
 let permissive_decl = ref false
+
 let file_invalid_code = 1
+
 let error = 2
 
 let speclist =
   Arg.align
-    [
-      (* Disable '-help' because its ugly without the -- *)
-      ( "-help",
-        Arg.Unit (fun () -> raise (Arg.Bad "unknown option '-help'")),
-        "" );
-      ("--parse-only", Arg.Set parse_only, " Only parse input file");
-      ("--type-only", Arg.Set type_only, " Only type input file");
-      ( "--permissive",
-        Arg.Set permissive_decl,
-        " Allow pattern matching on all arguments of functions." );
-    ]
+    [ (* Disable '-help' because its ugly without the -- *)
+      ( "-help"
+      , Arg.Unit (fun () -> raise (Arg.Bad "unknown option '-help'"))
+      , "" )
+    ; ("--parse-only", Arg.Set parse_only, " Only parse input file")
+    ; ("--type-only", Arg.Set type_only, " Only type input file")
+    ; ( "--permissive"
+      , Arg.Set permissive_decl
+      , " Allow pattern matching on all arguments of functions." ) ]
 
 let in_file =
   let input_file = ref None in
@@ -40,41 +42,41 @@ let in_file =
     if Filename.check_suffix f ".purs" then input_file := Some f
     else raise (Arg.Bad "missing '.purs' extension")
   in
-  Arg.parse speclist set_file usage_msg;
+  Arg.parse speclist set_file usage_msg ;
   match !input_file with
   | None ->
-      Format.printf "%s: no input file given.@." Sys.argv.(0);
-      Arg.usage speclist usage_msg;
+      Format.printf "%s: no input file given.@." Sys.argv.(0) ;
+      Arg.usage speclist usage_msg ;
       exit error
-  | Some f -> f
+  | Some f ->
+      f
 
 let () =
   try
     let in_chan = open_in in_file in
     let lexbuf = Lexing.from_channel ~with_positions:true in_chan in
-    Lexing.set_filename lexbuf in_file;
+    Lexing.set_filename lexbuf in_file ;
     try
       let prog = Parser.file PostLexer.next_token lexbuf in
-      close_in in_chan;
+      close_in in_chan ;
       if !parse_only then exit 0
       else (
-        ignore prog;
+        ignore prog ;
         let typ_prog = Typing.check_program !permissive_decl prog in
-        if !type_only then exit 0 else ignore typ_prog)
+        if !type_only then exit 0 else ignore typ_prog )
     with
     | Lexer.LexingError (terr, pos)
     | Ast.UnexpectedText (terr, pos)
     | TypingError.TypeError (terr, pos) ->
-        Format.eprintf "%a@.%s@." pp_error_head pos terr;
+        Format.eprintf "%a@.%s@." pp_error_head pos terr ;
         exit file_invalid_code
     | Parser.Error ->
         Format.eprintf "%a@.Syntax Error.@." pp_error_head
-          (Ast.lexbuf_to_pos lexbuf);
+          (Ast.lexbuf_to_pos lexbuf) ;
         exit file_invalid_code
   with
   | Sys_error s ->
-      Format.eprintf "%s@." s;
-      exit error
+      Format.eprintf "%s@." s ; exit error
   | e ->
-      Format.eprintf "Unexpected error:.@%s@." (Printexc.to_string_default e);
+      Format.eprintf "Unexpected error:.@%s@." (Printexc.to_string_default e) ;
       exit error

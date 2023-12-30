@@ -1,17 +1,14 @@
-type position = {
-  beg_line : int;
-  beg_col : int;
-  end_line : int;
-  end_col : int;
-  file : string;
-}
+type position =
+  {beg_line: int; beg_col: int; end_line: int; end_col: int; file: string}
 
-type 'a pos = { v : 'a; pos : position }
+type 'a pos = {v: 'a; pos: position}
 
 type typ = typ_kind pos
+
 and typ_kind = AstTVar of string | AstTData of string * typ list
 
 type coi_decl = coi_decl_kind pos
+
 and coi_decl_kind = CoI_Decl of string * typ list
 
 type binop =
@@ -30,6 +27,7 @@ type binop =
   | Or
 
 type constant = constant_kind pos
+
 and constant_kind = Int of int | Str of string | True | False
 
 type expr = expr_kind pos
@@ -85,22 +83,16 @@ let lexloc_to_pos (pos : Lexing.position * Lexing.position) =
   let file = beg_p.pos_fname in
   let beg_col = beg_p.pos_cnum - beg_p.pos_bol in
   let end_col = end_p.pos_cnum - end_p.pos_bol in
-  {
-    beg_line = beg_p.pos_lnum;
-    beg_col;
-    end_line = end_p.pos_lnum;
-    end_col;
-    file;
-  }
+  {beg_line= beg_p.pos_lnum; beg_col; end_line= end_p.pos_lnum; end_col; file}
 
 let lexbuf_to_pos lexbuf =
   lexloc_to_pos (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)
 
-let merge_pos p1 p2 = { p1 with end_line = p2.end_line; end_col = p2.end_col }
+let merge_pos p1 p2 = {p1 with end_line= p2.end_line; end_col= p2.end_col}
 
 let eof_pos lexbuf =
   let pos = lexbuf_to_pos lexbuf in
-  { pos with end_col = -1; beg_col = -1 }
+  {pos with end_col= -1; beg_col= -1}
 
 exception UnexpectedText of string * position
 
@@ -109,5 +101,5 @@ let assert_text_is (token_text, pos) text =
     raise
       (UnexpectedText
          ( Format.sprintf "Unexpected text : '%s'. Expected : '%s'" token_text
-             text,
-           pos ))
+             text
+         , pos ) )
