@@ -15,10 +15,13 @@ type instance_to_resolve =
     [expr] is the location that lead to the resolution. *)
 let instance2resolve lenv sigma decl expr =
   List.map
-    (fun (TInstance (cls_name, typl)) ->
-      {gamma= lenv; i= TInstance (cls_name, List.map (subst sigma) typl); expr}
-      )
-    decl.finsts
+    (fun inst ->
+      { gamma= lenv
+      ; i=
+          { inst_class= inst.inst_class
+          ; inst_args= List.map (subst sigma) inst.inst_args }
+      ; expr } )
+    decl.fun_insts
 
 exception UnresolvedInstance of instance * instance list
 
@@ -33,7 +36,7 @@ let sanitize tl =
       | Some i ->
           i
       | None ->
-          let vnar = TQuantifiedVar (TQVar.fresh ()) in
+          let vnar = TQuantifiedVar (QTypeVar.fresh ()) in
           Hashtbl.add mapping id vnar ;
           vnar )
     | TQuantifiedVar _ as t ->
@@ -46,15 +49,16 @@ let sanitize tl =
 (** [resolve_i2r] tries to resolve the "instance to resolve" in the global
     environment [genv] *)
 let resolve_i2r genv i2r =
-  let rec resinst lenv inst =
-    let (TInstance (cls_name, typ_list)) = inst in
+  let rec resinst lenv to_res =
     (* We check if [inst] is in the local env *)
     match
       List.find_opt
-        (fun (TInstance (inst_cls, inst_typl)) ->
+        (fun inst ->
           if
-            inst_cls = cls_name
-            && List.for_all2 can_unify (List.map copy typ_list) inst_typl
+            inst.inst_class = to_res.inst_class
+            && List.for_all2 can_unify
+                 (List.map copy to_res.inst_args)
+                 inst.inst_args
           then (* We found a matching instance in the function arguments *)
             true
           else false )
@@ -65,45 +69,44 @@ let resolve_i2r genv i2r =
     | None -> (
         (* Otherwise, we have to find an instance or a schema to resolve it in
            the global env. To do so, we first sanitize our type variables. *)
-        let typ_list_bis = sanitize typ_list in
-        match SMap.find_opt cls_name genv.schemadecls with
+        let typ_list_bis = sanitize to_res.inst_args in
+        match TypeClass.Map.find_opt to_res.inst_class genv.schemas with
         | Some l -> (
           (* [l] is the list of schema for the class [cls_name] *)
           match
             List.find_opt
-              (fun (sdecl : schema_decl) ->
+              (fun (sdecl : schema) ->
                 (* We replace all variables occurring in the type of the instance *)
-                let sigma = sfresh_subst sdecl.tvars in
-                let instname, instvars =
-                  let (TInstance (instname, instvars)) = sdecl.prod in
-                  (instname, List.map (subst sigma) instvars)
+                let sigma = sfresh_subst sdecl.schema_tvars in
+                let instvars =
+                  List.map (subst sigma) sdecl.schema_prod.inst_args
                 in
                 if List.for_all2 can_unify typ_list_bis instvars then (
-                  List.iter2 unify typ_list instvars ;
+                  List.iter2 unify to_res.inst_args instvars ;
                   (* We apply the substitution for the required instances *)
                   let req_inst =
                     List.map
-                      (fun (TInstance (cls, ttypl)) ->
-                        TInstance (cls, List.map (subst sigma) ttypl) )
-                      sdecl.req
+                      (fun req_inst ->
+                        { req_inst with
+                          inst_args= List.map (subst sigma) req_inst.inst_args
+                        } )
+                      sdecl.schema_req
                   in
                   try
                     (* we try to resolve the required instances *)
                     List.iter (resinst lenv) req_inst ;
                     true
                   with UnresolvedInstance (i, acc) ->
-                    raise
-                      (UnresolvedInstance
-                         (i, TInstance (instname, instvars) :: acc) ) )
+                    raise (UnresolvedInstance (i, sdecl.schema_prod :: acc)) )
                 else false )
               l
           with
           | Some _ ->
               ()
           | None ->
-              raise (UnresolvedInstance (inst, [])) )
+              raise (UnresolvedInstance (to_res, [])) )
         | None ->
-            raise (UnresolvedInstance (inst, [])) )
+            raise (UnresolvedInstance (to_res, [])) )
   in
   try resinst i2r.gamma i2r.i
   with UnresolvedInstance (i, stack) ->

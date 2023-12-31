@@ -55,12 +55,12 @@ let setup_pp_ttyp ?(atomic = false) lenv t =
       | TQuantifiedVar x ->
           Format.pp_print_string ppf (Hashtbl.find qvar_map x)
       | TSymbol (sid, []) ->
-          Format.pp_print_string ppf sid
+          Symbol.pp ppf sid
       | TSymbol (sid, args) when fst ->
-          Format.pp_print_string ppf sid ;
+          Symbol.pp ppf sid ;
           List.iter (Format.fprintf ppf " %a" (pp false)) args
       | TSymbol (sid, args) ->
-          Format.fprintf ppf "(%s" sid ;
+          Format.fprintf ppf "(%a" Symbol.pp sid ;
           List.iter (Format.fprintf ppf " %a" (pp false)) args ;
           Format.pp_print_string ppf ")"
     in
@@ -68,13 +68,12 @@ let setup_pp_ttyp ?(atomic = false) lenv t =
 
 let setup_pp_inst lenv t =
   let pp =
-    List.fold_left (fun acc (TInstance (_, ttyps)) -> ttyps @ acc) [] t
+    List.fold_left (fun acc inst -> inst.inst_args @ acc) [] t
     |> setup_pp_ttyp ~atomic:true lenv
   in
   fun ppf inst ->
-    let (TInstance (cn, inst_ttyp)) = inst in
-    Format.pp_print_string ppf cn ;
-    List.iter (Format.fprintf ppf " %a" pp) inst_ttyp
+    TypeClass.pp ppf inst.inst_class ;
+    List.iter (Format.fprintf ppf " %a" pp) inst.inst_args
 
 let rec pp_pat ppf p =
   match p.pat with
@@ -82,16 +81,16 @@ let rec pp_pat ppf p =
       Format.pp_print_string ppf "_"
   | TPatVar _ ->
       Format.pp_print_string ppf "var"
-  | TPatConstant TUnitConstant ->
+  | TPatConstant TUnit ->
       Format.pp_print_string ppf "unit"
-  | TPatConstant (TBoolConstant f) ->
+  | TPatConstant (TBool f) ->
       Format.pp_print_bool ppf f
-  | TPatConstant (TIntConstant i) ->
+  | TPatConstant (TInt i) ->
       Format.pp_print_int ppf i
-  | TPatConstant (TStringConstant s) ->
+  | TPatConstant (TString s) ->
       Format.pp_print_string ppf s
   | TPatConstructor (cstr, args) ->
-      Format.fprintf ppf "(%s" cstr ;
+      Format.fprintf ppf "(%a" Constructor.pp cstr ;
       List.iter (Format.fprintf ppf " %a" pp_pat) args ;
       Format.fprintf ppf ")"
 
@@ -115,12 +114,12 @@ let unknown_symbol n pos =
   in
   raise (TypeError (txt, pos.pos))
 
-let symbol_arity_mismatch decl ar_found pos =
+let symbol_arity_mismatch symbid ar_expected ar_found pos =
   let txt =
-    Format.sprintf
-      "The type symbol '%s' expects %i arguments, but is applied here to %i \
+    Format.asprintf
+      "The type symbol '%a' expects %i arguments, but is applied here to %i \
        arguments."
-      decl.symbid decl.arity ar_found
+      Symbol.pp symbid ar_expected ar_found
   in
   raise (TypeError (txt, pos.pos))
 
@@ -179,12 +178,12 @@ let unification_error lenv uerr t1 t2 pos =
   in
   raise (TypeError (txt, pos.pos))
 
-let constr_arity_mismatch constr expected found pos =
+let constr_arity_mismatch constr constr_decl found pos =
   let txt =
-    Format.sprintf
-      "The constructor '%s' expects %i arguments, but is applied here to %i \
+    Format.asprintf
+      "The constructor '%a' expects %i arguments, but is applied here to %i \
        arguments."
-      constr expected found
+      Constructor.pp constr constr_decl.constr_arity found
   in
   raise (TypeError (txt, pos.pos))
 
@@ -271,11 +270,11 @@ let constr_already_in_symb constr symbol pos =
   in
   raise (TypeError (txt, pos.pos))
 
-let constr_already_in_genv constr symdecl pos =
+let constr_already_in_genv constr symbid pos =
   let txt =
-    Format.sprintf
-      "The constructor '%s' is already declared within the type symbol '%s'."
-      constr symdecl.symbid
+    Format.asprintf
+      "The constructor '%s' is already declared within the type symbol '%a'."
+      constr Symbol.pp symbid
   in
   raise (TypeError (txt, pos.pos))
 
@@ -337,12 +336,12 @@ let unknown_class n pos =
   let txt = Format.sprintf "The type class '%s' is not defined." n in
   raise (TypeError (txt, pos.pos))
 
-let class_arity_mismatch class_decl ar_found pos =
+let class_arity_mismatch clsid class_decl ar_found pos =
   let txt =
-    Format.sprintf
-      "The type class '%s' expects %i arguments, but is applied here to %i \
+    Format.asprintf
+      "The type class '%a' expects %i arguments, but is applied here to %i \
        arguments."
-      class_decl.class_name class_decl.carity ar_found
+      TypeClass.pp clsid class_decl.tclass_arity ar_found
   in
   raise (TypeError (txt, pos.pos))
 
@@ -366,10 +365,10 @@ let multiples_non_var_in_fun_args fun_name pos =
 
 let strange_non_var_in_decls fun_name pos =
   let txt =
-    Format.sprintf
-      "Not all implementations of the function '%s' have their filter patterns \
+    Format.asprintf
+      "Not all implementations of the function '%a' have their filter patterns \
        on the same argument."
-      fun_name
+      Function.pp fun_name
   in
   raise (TypeError (txt, pos.pos))
 
@@ -387,16 +386,17 @@ let not_exhaustive_fun fname (pos : Ast.decl list) =
     {fst.pos with end_line= lst.pos.end_line; end_col= lst.pos.end_col}
   in
   let txt =
-    Format.sprintf
-      "Pattern matching on the arguments of the function '%s' is not \
+    Format.asprintf
+      "Pattern matching on the arguments of the function '%a' is not \
        exhaustive."
-      fname
+      Function.pp fname
   in
   raise (TypeError (txt, pos))
 
 let multiple_const_def cstname pos =
   let txt =
-    Format.sprintf "The global constant '%s' is defined several times." cstname
+    Format.asprintf "The global constant '%a' is defined several times."
+      Function.pp cstname
   in
   raise (TypeError (txt, pos.pos))
 
@@ -416,10 +416,10 @@ let same_fun_in_class fun_name class_name pos =
   raise (TypeError (txt, pos.pos))
 
 let can_unify_instances lenv prod_inst sdecl pos =
-  let pp = setup_pp_inst lenv [prod_inst; sdecl.prod] in
+  let pp = setup_pp_inst lenv [prod_inst; sdecl.schema_prod] in
   let txt =
     Format.asprintf "Instances '%a' and '%a' can be unified." pp prod_inst pp
-      sdecl.prod
+      sdecl.schema_prod
   in
   raise (TypeError (txt, pos.pos))
 
@@ -432,16 +432,16 @@ let function_already_def_in_inst lenv fname inst pos =
   in
   raise (TypeError (txt, pos.pos))
 
-let function_not_in_class fname class_decl pos =
+let function_not_in_class fname clsid pos =
   let txt =
-    Format.sprintf "The function '%s' is not defined in the type class '%s'."
-      fname class_decl.class_name
+    Format.asprintf "The function '%s' is not defined in the type class '%a'."
+      fname TypeClass.pp clsid
   in
   raise (TypeError (txt, pos.pos))
 
-let missing_functions lenv inst fdone class_decl pos =
+let missing_functions lenv inst fdone clsid class_decl pos =
   let miss_fun =
-    SMap.filter (fun name _ -> SSet.mem name fdone) class_decl.cfun_decls
+    SMap.filter (fun name _ -> SSet.mem name fdone) class_decl.tclass_decls
   in
   let rec _pp ppf = function
     | [] ->
@@ -457,9 +457,9 @@ let missing_functions lenv inst fdone class_decl pos =
   let txt =
     Format.asprintf
       "The '%a' instance is missing the implementation of the functions %a \
-       declared in the '%s' type class."
+       declared in the '%a' type class."
       pp inst _pp
       (SMap.bindings miss_fun |> List.map fst)
-      class_decl.class_name
+      TypeClass.pp clsid
   in
   raise (TypeError (txt, pos.pos))

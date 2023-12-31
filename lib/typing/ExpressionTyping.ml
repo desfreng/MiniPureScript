@@ -36,7 +36,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
     | Some (vtyp, vid) ->
         (TVariable vid, vtyp, M.empty)
     | None ->
-        (TConstant TUnitConstant, unit_t, M.empty) )
+        (TConstant TUnit, unit_t, M.empty) )
   | ExprVar v -> (
     match SMap.find_opt v lenv.vartype with
     | Some (vtyp, vid) ->
@@ -49,8 +49,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       (texpr.expr, texpr.expr_typ, i2r)
   | Neg e ->
       let texpr, i2r = type_expr genv lenv e int_t in
-      let zero = {expr= TConstant (TIntConstant 0); expr_typ= int_t} in
-      (TBinOp (zero, Minus, texpr), int_t, i2r)
+      (TNeg texpr, int_t, i2r)
   | BinOp (lhs, ((Plus | Minus | Div | Mul) as op), rhs) ->
       (* Arithmetic operation *)
       let lhs_texpr, lhs_i2r = type_expr genv lenv lhs int_t in
@@ -108,7 +107,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
             (* 1. Find the type of v_exp and build its texpr_kind *)
             let v_texp_k, v_typ, v_i2r = compute_expr_type genv lenv v_exp in
             (* 2. Create a new id for the variable v_name. *)
-            let v_id = VarId.fresh () in
+            let v_id = Variable.fresh v_name in
             (* 3. Add the mapping v_name -> (v_typ, v_id) to the environment *)
             let lenv = add_vartype_to_lenv lenv v_name v_typ v_id in
             (* 4. Add (v_id, v_texpr) to the bindings list and, update the accumulator *)
@@ -129,17 +128,18 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       in
       (lexprs.expr, lexprs.expr_typ, M.(i2r <> e_i2r))
   | AppConstr (cst, args) -> (
-    match SMap.find_opt cst genv.constrsdecls with
+    match Constructor.exists cst with
     (* [decl] is the symbol declaration associated to the constructor [cst] *)
-    | Some decl ->
+    | Some (cid, sid) ->
+        let decl = Symbol.Map.find sid genv.symbols in
         let found_ar = List.length args in
-        let target_ar = SMap.find cst decl.constrs_arity in
-        if target_ar <> found_ar then
+        let constr_decl = Constructor.Map.find cid decl.symbol_constr in
+        if constr_decl.constr_arity <> found_ar then
           (* Not the right amount of argument to build this type *)
-          TypingError.constr_arity_mismatch cst target_ar found_ar expr
+          TypingError.constr_arity_mismatch cid constr_decl found_ar expr
         else
           (* sigma is a substitution of variable used of the type to fresh one. *)
-          let sigma = lfresh_subst decl.tvars in
+          let sigma = lfresh_subst decl.symbol_tvars in
           (* We compute the type of all the arguments *)
           let t_args =
             List.map
@@ -154,7 +154,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
           let constr_args =
             (* [args_typ] is the list of type of the constructor, with all the
                variables in [decl.vars]. *)
-            let args_typ = SMap.find cst decl.constrs in
+            let args_typ = constr_decl.constr_args in
             (* So, after the substitution, no variable are in [decl.vars]. *)
             List.map (subst sigma) args_typ
           in
@@ -176,10 +176,12 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
           in
           (* We apply sigma to each type of the symbol declaration to compute
              the argument of the symbol. *)
-          let data_typ = List.map (fun x -> Hashtbl.find sigma x) decl.tvars in
+          let data_typ =
+            List.map (fun x -> Hashtbl.find sigma x) decl.symbol_tvars
+          in
           (* Finally, we can build the TAst and the type ! *)
-          let e = TConstructor (cst, args_exprs) in
-          let t = TSymbol (decl.symbid, data_typ) in
+          let e = TConstructor (cid, args_exprs) in
+          let t = TSymbol (sid, data_typ) in
           (e, t, i2r)
     | None ->
         TypingError.unknown_constructor cst expr )
@@ -195,15 +197,16 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
            supported for now), so error ! *)
         TypingError.variable_not_a_function lenv fn t (List.length args) expr
   | AppFun (fn, args) -> (
-    match SMap.find_opt fn genv.fundecls with
-    | Some decl ->
+    match Function.exists fn with
+    | Some fid ->
+        let decl = Function.Map.find fid genv.funs in
         let found_ar = List.length args in
-        if decl.arity <> found_ar then
+        if decl.fun_arity <> found_ar then
           (* Not the right amount of argument to call the function *)
-          TypingError.function_arity_mismatch fn decl.arity found_ar expr
+          TypingError.function_arity_mismatch fn decl.fun_arity found_ar expr
         else
           (* We create [sigma] in a similar way to the case of the constructor *)
-          let sigma = sfresh_subst decl.tvars in
+          let sigma = sfresh_subst decl.fun_tvars in
           (* We compute the type of all the arguments *)
           let t_args =
             List.map
@@ -217,7 +220,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
              Invariant: No type variable of [fun_args] are in [lenv.tvars] *)
           let fun_args =
             (* So, after the substitution, no variable are in [decl.vars]. *)
-            List.map (subst sigma) decl.args
+            List.map (subst sigma) decl.fun_args
           in
           (* For each argument of the function, we unify its expected type
              (ie. [fun_args]) with the type found (ie. [t_args]). *)
@@ -237,8 +240,8 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
           in
           (* We compute the instances to resolve to accept the function *)
           let fun_i2r = M.from_list (instance2resolve lenv sigma decl expr) in
-          let res_typ = unfold (subst sigma decl.typ) in
-          (TApp (decl.fun_name, args_exprs), res_typ, M.(args_i2r <> fun_i2r))
+          let res_typ = unfold (subst sigma decl.fun_ret) in
+          (TApp (fid, args_exprs), res_typ, M.(args_i2r <> fun_i2r))
     | None ->
         TypingError.unknown_function fn expr )
   | Case (e, p) ->

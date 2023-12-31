@@ -51,13 +51,14 @@ let rec wf_type genv lenv (t : Ast.typ) =
     | None ->
         TypingError.unknown_type_var v t )
   | AstTData (n, args) -> (
-    match SMap.find_opt n genv.symbsdecls with
-    | Some decl ->
+    match Symbol.exists n with
+    | Some sid ->
+        let decl = Symbol.Map.find sid genv.symbols in
         let a = List.length args in
-        if a = decl.arity then
+        if a = decl.symbol_arity then
           let targs = List.map (wf_type genv lenv) args in
-          TSymbol (decl.symbid, targs)
-        else TypingError.symbol_arity_mismatch decl a t
+          TSymbol (sid, targs)
+        else TypingError.symbol_arity_mismatch sid decl.symbol_arity a t
     | None ->
         TypingError.unknown_symbol n t )
 
@@ -65,10 +66,10 @@ let rec wf_type genv lenv (t : Ast.typ) =
 let type_constant (cst : Ast.constant) =
   match cst.v with
   | True ->
-      (TBoolConstant true, bool_t)
+      (Constant.TBool true, bool_t)
   | False ->
-      (TBoolConstant false, bool_t)
+      (Constant.TBool false, bool_t)
   | Int i ->
-      (TIntConstant i, int_t)
+      (Constant.TInt i, int_t)
   | Str s ->
-      (TStringConstant s, string_t)
+      (Constant.TString s, string_t)

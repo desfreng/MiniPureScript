@@ -36,21 +36,22 @@ and compute_pattern_type lenv genv (pat : Ast.pattern) =
       (TPatWildcard, new_tvar (), SMap.empty)
   | PatVariable v ->
       (* This is a fresh variable, that we must introduce in the environment *)
-      let v_id = VarId.fresh () in
+      let v_id = Variable.fresh v in
       let v_typ = new_tvar () in
       (TPatVar v_id, v_typ, SMap.singleton v (v_typ, v_id))
   | PatConstructor (cst, args) -> (
     (* This is a filtering with a constructor. *)
-    match SMap.find_opt cst genv.constrsdecls with
-    | Some decl ->
+    match Constructor.exists cst with
+    | Some (cid, sid) ->
+        let decl = Symbol.Map.find sid genv.symbols in
         let found_ar = List.length args in
-        let target_ar = SMap.find cst decl.constrs_arity in
-        if target_ar <> found_ar then
+        let constr_decl = Constructor.Map.find cid decl.symbol_constr in
+        if constr_decl.constr_arity <> found_ar then
           (* Not the right amount of argument to build this type *)
-          TypingError.constr_arity_mismatch cst target_ar found_ar pat
+          TypingError.constr_arity_mismatch cid constr_decl found_ar pat
         else
           (* sigma is a substitution of variable used of the type to fresh one. *)
-          let sigma = lfresh_subst decl.tvars in
+          let sigma = lfresh_subst decl.symbol_tvars in
           (* We compute the type of all the arguments *)
           let t_args =
             List.map
@@ -65,7 +66,7 @@ and compute_pattern_type lenv genv (pat : Ast.pattern) =
           let constr_args =
             (* [args_typ] is the list of type of the constructor, with all the
                variables in [decl.vars]. *)
-            let args_typ = SMap.find cst decl.constrs in
+            let args_typ = constr_decl.constr_args in
             (* So, after the substitution, no variable are in [decl.vars]. *)
             List.map (subst sigma) args_typ
           in
@@ -90,10 +91,12 @@ and compute_pattern_type lenv genv (pat : Ast.pattern) =
           in
           (* We apply sigma to each type of the symbol declaration to compute
              the argument of the symbol. *)
-          let data_typ = List.map (fun x -> Hashtbl.find sigma x) decl.tvars in
+          let data_typ =
+            List.map (fun x -> Hashtbl.find sigma x) decl.symbol_tvars
+          in
           (* Finally, we can build the pattern and the type ! *)
-          let p = TPatConstructor (cst, args_exprs) in
-          let t = TSymbol (decl.symbid, data_typ) in
+          let p = TPatConstructor (cid, args_exprs) in
+          let t = TSymbol (sid, data_typ) in
           (p, t, lenv)
     | None ->
         TypingError.unknown_constructor cst pat )

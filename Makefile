@@ -20,4 +20,4 @@ exec_test: ppurse
 test: ppurse
 	cd test-files && bash ./test -all ../ppurse
 
-.PHONY: all clean parse_test typing_test exec_test test
+.PHONY: all clean parsing_test typing_test exec_test test

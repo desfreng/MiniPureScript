@@ -60,10 +60,9 @@ let () =
       let prog = Parser.file PostLexer.next_token lexbuf in
       close_in in_chan ;
       if !parse_only then exit 0
-      else (
-        ignore prog ;
-        let typ_prog = Typing.check_program !permissive_decl prog in
-        if !type_only then exit 0 else ignore typ_prog )
+      else
+        let tprog = Typing.check_program !permissive_decl prog in
+        if !type_only then exit 0 else ignore tprog
     with
     | Lexer.LexingError (terr, pos)
     | Ast.UnexpectedText (terr, pos)
