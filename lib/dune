@@ -14,8 +14,3 @@
 
 (library
  (name PetitPureScript))
-
-; (env
-;  (dev
-;   (flags
-;    (:standard -warn-error -A))))

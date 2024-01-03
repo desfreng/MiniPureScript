@@ -1,4 +1,7 @@
-module UniqueId = struct
+(* We use functor when multiple module are implemented in the same way because
+   we do not want any sharing between them (the hashtable MUST be discinct). *)
+
+module UniqueId (M : sig end) = struct
   type t = int
 
   let fresh =
@@ -16,10 +19,13 @@ module UniqueId = struct
   type set = Set.t
 end
 
-module TypeVar = UniqueId
-module QTypeVar = UniqueId
+module TypeVar = UniqueId (struct end)
 
-module UniqueNamedId = struct
+module QTypeVar = UniqueId (struct end)
+
+module Schema = UniqueId (struct end)
+
+module UniqueNamedId (M : sig end) = struct
   type t = string
 
   let name = Fun.id
@@ -44,9 +50,11 @@ module UniqueNamedId = struct
   let exists name = if Set.mem name !symbol_set then Some name else None
 end
 
-module Symbol = UniqueNamedId
-module Function = UniqueNamedId
-module TypeClass = UniqueNamedId
+module Symbol = UniqueNamedId (struct end)
+
+module Function = UniqueNamedId (struct end)
+
+module TypeClass = UniqueNamedId (struct end)
 
 module Variable = struct
   type t = int

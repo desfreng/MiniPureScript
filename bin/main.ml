@@ -62,13 +62,15 @@ let () =
       if !parse_only then exit 0
       else
         let tprog = Typing.check_program !permissive_decl prog in
-        if !type_only then exit 0 else ignore tprog
+        if !type_only then exit 0 else PP.pp_prog Format.std_formatter tprog
     with
     | Lexer.LexingError (terr, pos)
     | Ast.UnexpectedText (terr, pos)
-    | TypingError.TypeError (terr, pos) ->
+    | TypingError.TypeError (terr, Some pos) ->
         Format.eprintf "%a@.%s@." pp_error_head pos terr ;
         exit file_invalid_code
+    | TypingError.TypeError (terr, None) ->
+        Format.eprintf "%s@." terr ; exit file_invalid_code
     | Parser.Error ->
         Format.eprintf "%a@.Syntax Error.@." pp_error_head
           (Ast.lexbuf_to_pos lexbuf) ;
@@ -77,5 +79,13 @@ let () =
   | Sys_error s ->
       Format.eprintf "%s@." s ; exit error
   | e ->
-      Format.eprintf "Unexpected error:.@%s@." (Printexc.to_string_default e) ;
+      let exn_txt = Printexc.to_string_default e in
+      Format.eprintf "Unexpected error:.@%s@." exn_txt ;
+      (let backtrace = Printexc.get_backtrace () in
+       if backtrace <> "" then (
+         Format.eprintf "@.Backtrace:@." ;
+         List.iter
+           (fun line -> if line <> "" then Format.eprintf " - %s@." line)
+           (String.split_on_char '\n' backtrace) ;
+         Format.print_newline () ) ) ;
       exit error

@@ -1,38 +1,5 @@
 open TAst
-
-(** A small module to concatenate things quickly *)
-module M : sig
-  type 'a t
-
-  val empty : 'a t
-
-  val from_list : 'a list -> 'a t
-
-  val ( <> ) : 'a t -> 'a t -> 'a t
-
-  val fold : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-end = struct
-  type 'a t = Empty | Leaf of 'a list | Concat of 'a t * 'a t
-
-  (** The empty set. *)
-  let empty = Empty
-
-  (** Build a set from of list. *)
-  let from_list x = Leaf x
-
-  (** Concatenate two set. *)
-  let ( <> ) a b =
-    match (a, b) with Empty, t | t, Empty -> t | a, b -> Concat (a, b)
-
-  (** Iterate of the set *)
-  let rec fold f acc = function
-    | Empty ->
-        acc
-    | Leaf x ->
-        List.fold_left f acc x
-    | Concat (a, b) ->
-        fold f (fold f acc a) b
-end
+open DefaultTypingEnv
 
 (** [add_vartype_to_lenv] add the binding about the variable [v_name] of type
     [v_typ] with id [v_id] to the local environment [lenv] *)

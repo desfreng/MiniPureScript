@@ -1,9 +1,9 @@
 open TAst
 open Ast
+open DefaultTypingEnv
 open CommonTyping
 open PatternTyping
 open ExpressionTyping
-open ResolveInstance
 open CompileCase
 
 (** Modified version of [mapi] and [map2] of the module [List] to have both. *)
@@ -44,19 +44,34 @@ let list_type_variables =
       SSet.union (list_type_variables tl) acc )
     SSet.empty
 
+let instance_list_to_lenv instl =
+  let _, map =
+    List.fold_left
+      (fun (index, map) (inst_class, inst_args) ->
+        match TypeClass.Map.find_opt inst_class map with
+        | Some l ->
+            ( index + 1
+            , TypeClass.Map.add inst_class
+                ((index, inst_class, inst_args) :: l)
+                map )
+        | None ->
+            ( index + 1
+            , TypeClass.Map.add inst_class [(index, inst_class, inst_args)] map
+            ) )
+      (0, TypeClass.Map.empty) instl
+  in
+  map
+
 (** [different_var_types error var_types] checks that all variables in the list
     [var_types] are distincts. If so return this list and this length. Otherwise,
     call the function [error] with the repeating variable as argument. *)
 let different_var_types error var_types =
-  let acc, _, arity =
-    List.fold_left
-      (fun (acc, var_set, arity) x ->
-        let tvar = QTypeVar.fresh () in
-        if SSet.mem x var_set then error x
-        else (tvar :: acc, SSet.add x var_set, arity + 1) )
-      ([], SSet.empty, 0) var_types
-  in
-  (acc, arity)
+  List.fold_right (* We preserve the type variable order *)
+    (fun x (acc, arity, var_map) ->
+      let tvar = QTypeVar.fresh () in
+      if SMap.mem x var_map then error x
+      else (tvar :: acc, arity + 1, SMap.add x tvar var_map) )
+    var_types ([], 0, SMap.empty)
 
 (** [get_function_list fname next_decls] finds all the declarations of a
     function of name [fnam] (if defined). If [fname] is [None], we returns the
@@ -70,29 +85,33 @@ let get_functions_list fname next_decls =
   let rec loop fname acc next_decls =
     match next_decls with
     | [] ->
-        (acc, next_decls) (* No more declaration, we return what we have *)
+        (* No more declaration, we return what we have *)
+        (fname, acc, next_decls)
     | decl :: tl -> (
-      (* A declaration if found *)
-      match (decl.v, fname) with
-      | FunDecl (fn, pats, body), None ->
-          (* No name defined, but a function declaration found. So we search
-             for more function declaration of the same name as the one we
-             found after saving it in [acc].*)
-          loop (Some fn) ((fn, pats, body, decl) :: acc) tl
-      | FunDecl (fn, pats, body), Some f_name when fn = f_name ->
-          (* We found a function declaration with the name we want. So we
-             search for more after saving it in [acc]. *)
-          loop fname ((fn, pats, body, decl) :: acc) tl
-          (* We either :
-             - found a function declaration whose name is not fname
-             - found another type of declaration
-             In both cases -> end of the search *)
+      (* A declaration is found *)
+      match decl.v with
+      | FunDecl (fn, pats, body) -> (
+        match fname with
+        | None ->
+            (* No name defined, but a function declaration found. So we search
+               for more function declaration of the same name as the one we
+               found after saving it in [acc].*)
+            loop (Some fn) ((pats, body, decl) :: acc) tl
+        | Some f ->
+            if fn = f then
+              (* We found a function declaration with the name we want. So we
+                 search for more after saving it in [acc]. *)
+              loop fname ((pats, body, decl) :: acc) tl
+            else
+              (* We found a function declaration whose name is not fname, we end the search. *)
+              (fname, acc, next_decls) )
       | _ ->
-          (acc, next_decls) )
+          (* This is not a function declaration, we end the search. *)
+          (fname, acc, next_decls) )
   in
-  let fdecls, (next_decls : decl list) = loop fname [] next_decls in
+  let fname, fdecls, next_decls = loop fname [] next_decls in
   (* We keep the order of the declaration *)
-  (List.rev fdecls, next_decls)
+  (fname, List.rev fdecls, next_decls)
 
 (** [check_pats_and_expr genv lenv fdecl decl (fname, pats, expr)] checks that
     the function equation [fname] defined by the patterns [pats] and the
@@ -101,14 +120,14 @@ let get_functions_list fname next_decls =
     function.
 
     [decl] is used as a position marker. *)
-let check_pats_and_expr permissive genv lenv (arity, ret_typ, args_typs)
-    (fname, pats, expr, decl) =
+let check_pats_and_expr permissive genv lenv fid (arity, ret_typ, args_typs)
+    (pats, expr, decl) =
   let case_pos = ref None in
   let new_vars = ref SMap.empty in
   (* We check that each pattern is well-formed.*)
   let nb_args = List.length pats in
   if nb_args <> arity then
-    TypingError.function_arity_mismatch fname arity nb_args decl
+    TypingError.function_arity_mismatch fid arity nb_args decl
   else
     let pats =
       (* [i] is the curent index in the list
@@ -128,11 +147,11 @@ let check_pats_and_expr permissive genv lenv (arity, ret_typ, args_typs)
           | _, Some _ ->
               if not permissive then
                 (* We have found a non variable pattern at the wrong position.  *)
-                TypingError.multiples_non_var_in_fun_args fname pat ) ;
+                TypingError.multiples_non_var_in_fun_args fid pat ) ;
           (* we update the set of bindings *)
           new_vars :=
             SMap.union
-              (fun x -> TypingError.same_variable_in_fun x fname pat)
+              (fun x -> TypingError.same_variable_in_fun x fid pat)
               !new_vars patenv ;
           (* And we return the typed pattern *)
           cpat )
@@ -141,67 +160,62 @@ let check_pats_and_expr permissive genv lenv (arity, ret_typ, args_typs)
     (* We update the local environment with the variable of the patterns *)
     let lenv = {lenv with vartype= !new_vars} in
     (* And we type the expression of the equation *)
-    let texpr, i2rs = type_expr genv lenv expr ret_typ in
-    (* We resolve the instances required in the function body *)
-    M.fold (fun () i2r -> resolve_i2r genv i2r) () i2rs ;
-    (!case_pos, (pats, texpr))
+    let texpr, i2r = type_expr genv lenv expr ret_typ in
+    (!case_pos, pats, texpr, i2r)
 
 (** [check_fun_equations genv lenv fdecl fun_body] *)
-let check_fun_equations genv lenv (fun_id, fimpl_arity, ret_typ, args_typ)
-    fun_body permissive associed_instance =
+let check_fun_equations genv lenv (fun_id, fun_impl_arity, ret_typ, args_typ)
+    fun_body permissive =
   (* We type all equations and verify that they are well-formed. *)
-  let fun_data =
-    List.map
-      (check_pats_and_expr permissive genv lenv
-         (fimpl_arity, ret_typ, args_typ) )
+  let _, _, mat_pat, i2r =
+    List.fold_left
+      (fun (eq_id, last_pat_pos, mat_pat, i2r) ((_, _, decl) as f_eq) ->
+        let eq_pat_pos, pats, eq, eq_i2r =
+          check_pats_and_expr permissive genv lenv fun_id
+            (fun_impl_arity, ret_typ, args_typ)
+            f_eq
+        in
+        let last_pat_pos =
+          if not permissive then
+            match (eq_pat_pos, last_pat_pos) with
+            | Some p, None ->
+                Some p
+            | Some i, Some j ->
+                if i = j then Some i
+                else
+                  (* Both Non var not at the same position *)
+                  TypingError.strange_non_var_in_decls fun_id decl
+            | None, Some _ ->
+                last_pat_pos
+            | None, None ->
+                if eq_id == 1 then last_pat_pos
+                else TypingError.multiple_const_def fun_id decl
+          else last_pat_pos
+        in
+        let i2r = Monoid.(i2r <> eq_i2r) in
+        let mat_pat = Monoid.(mat_pat <> of_elm (pats, eq)) in
+        (eq_id + 1, last_pat_pos, mat_pat, i2r) )
+      (1, None, Monoid.empty, Monoid.empty)
       fun_body
   in
-  (* Were should be the pattern in the function *)
-  let _ =
-    match (fun_data, fun_body) with
-    | [(None, _)], [_] ->
-        ()
-    | (None, _) :: _, (_, _, _, decl) :: _ ->
-        if fimpl_arity = 0 then TypingError.multiple_const_def fun_id decl
-    | (Some pat_pos, _) :: _, _ ->
-        (* We check that only one non variable pattern occur, at the same
-           position for each equation *)
-        ignore
-          (List.iter2
-             (fun (fpos, _) (_, _, _, decl) ->
-               match fpos with
-               | Some i when i = pat_pos ->
-                   () (* Non var at the same position. *)
-               | None ->
-                   () (* Always vars *)
-               | Some _ ->
-                   if permissive then ()
-                   else
-                     (* Both Non var not at the same position *)
-                     TypingError.strange_non_var_in_decls fun_id decl )
-             fun_data fun_body )
-    | _ ->
-        assert false
-  in
+  Monoid.iter (fun i2r -> ignore (Lazy.force i2r)) i2r ;
   (* Everything is ok. So now, we compile our function to an unique
      expression *)
-  let fimpl_vars =
-    List.init fimpl_arity (fun i -> Variable.fresh ("in" ^ string_of_int i))
+  let fun_impl_vars =
+    List.init fun_impl_arity (fun i -> Variable.fresh ("in" ^ string_of_int i))
   in
   let fargs =
     List.map2
       (fun typ varid -> make_expr (TVariable varid) typ)
-      args_typ fimpl_vars
+      args_typ fun_impl_vars
   in
-  let decl_list = List.map (fun (_, _, _, x) -> x) fun_body in
-  (* We build the pattern matrix*)
-  let mat_pat = List.map snd fun_data in
+  let decl_list = List.map (fun (_, _, x) -> x) fun_body in
   (* And compile it to an expression *)
-  let fimpl_expr =
+  let fun_impl_expr =
     compile_function genv ret_typ fargs mat_pat fun_id decl_list
   in
   (* We build the fimpl structure *)
-  {fimpl_vars; fimpl_arity; fimpl_expr; associed_instance}
+  {fun_impl_id= fun_id; fun_impl_vars; fun_impl_arity; fun_impl_expr}
 
 (** [check_symbol genv symbol_name var_types constrs pos] checks that the symbol
     declaration of [symbol_name] with type argument [var_types] and constructors
@@ -214,17 +228,18 @@ let check_symbol genv symbol_name var_types constrs pos =
       TypingError.symbol_already_exists symbol_name pos
   | None ->
       (* [var_list] is the list of type variable of the symbol [symbol_name] *)
-      let symbol_tvars, symbol_arity =
+      let symbol_tvars, symbol_arity, _ =
         different_var_types
           (fun x -> TypingError.typ_var_already_decl_in_symb x symbol_name pos)
           var_types
       in
+      (* Format.eprintf "%a" (TypingError.pp_list)  *)
       let symbid = Symbol.fresh symbol_name in
       (* We contruct the symbol declaration *)
       let symdecl =
         {symbol_constr= Constructor.Map.empty; symbol_tvars; symbol_arity}
       in
-      (* [lenv] is the local environment in witch the type of the constructor must
+      (* [lenv] is the local environment in which the type of the constructor must
          be well-formed.*)
       let lenv =
         { default_lenv with
@@ -262,7 +277,7 @@ let check_symbol genv symbol_name var_types constrs pos =
                   0 args_typs
               in
               let constrs =
-                Constructor.Map.add cid {constr_args; constr_arity} constrs
+                Constructor.Map.add cid (constr_args, constr_arity) constrs
               in
               (constrs, cstr_set) )
           (Constructor.Map.empty, SSet.empty)
@@ -296,25 +311,14 @@ let check_class genv class_name var_types fun_decls pos =
   | None ->
       let cid = TypeClass.fresh class_name in
       (* We build the class declaration *)
-      let tclass_tvars, tclass_arity =
+      let tclass_tvars, tclass_arity, tvarsmap =
         different_var_types
           (fun v -> TypingError.typ_var_already_decl_in_class v class_name pos)
           var_types
       in
-      let tvarsmap =
-        List.fold_left2
-          (fun acc tqvar name -> SMap.add name tqvar acc)
-          SMap.empty tclass_tvars var_types
-      in
       (* We build a local environment with the type variable we checked. It will
          be used to check functions declarations. *)
       let lenv = {default_lenv with tvars= tvarsmap} in
-      (* [req_insts] is the class that must be resolved to call each function
-         of this class. *)
-      let fun_insts =
-        [ { inst_class= cid
-          ; inst_args= List.map (fun x -> TQuantifiedVar x) tclass_tvars } ]
-      in
       (* For each function of in the [fun_decls] list *)
       let genv, tclass_decls =
         List.fold_left
@@ -341,15 +345,11 @@ let check_class genv class_name var_types fun_decls pos =
                       check_type_decl genv lenv args ret
                     in
                     let fun_id = Function.fresh fname in
-                    let fdecl =
-                      { fun_tvars= QTypeVar.Set.of_list tclass_tvars
-                      ; fun_insts
-                      ; fun_args
-                      ; fun_arity
-                      ; fun_ret }
-                    in
                     let genv =
-                      {genv with funs= Function.Map.add fun_id fdecl genv.funs}
+                      { genv with
+                        funs=
+                          Function.Map.add fun_id (Either.Right cid) genv.funs
+                      }
                     in
                     (genv, SMap.add fname (fun_args, fun_arity, fun_ret) fdecls)
               )
@@ -372,11 +372,11 @@ let check_wf_instance genv lenv inst =
       in
       if arity <> decl.tclass_arity then
         TypingError.class_arity_mismatch class_id decl arity inst
-      else {inst_class= class_id; inst_args= t_args}
+      else (class_id, t_args)
   | None ->
       TypingError.unknown_class c_name inst
 
-let check_instance genv tprog req_inst prod_inst fun_decls permissive decl =
+let check_instance genv req_inst prod_inst fun_decls permissive decl =
   (* We compute the types variables *)
   let tvars = list_type_variables (prod_inst :: req_inst) in
   let tvars_map, tvars_set =
@@ -391,29 +391,36 @@ let check_instance genv tprog req_inst prod_inst fun_decls permissive decl =
   let lenv = {default_lenv with tvars= tvars_map} in
   (* We check that instances required and produced are well formed *)
   let req_inst = List.map (check_wf_instance genv lenv) req_inst in
-  let prod_inst = check_wf_instance genv lenv prod_inst in
+  let ((prod_class, prod_args) as prod_inst) =
+    check_wf_instance genv lenv prod_inst
+  in
+  (* We create a new shema id *)
+  let sid = Schema.fresh () in
   (* To build the schema *)
   let schem_decl =
-    {schema_prod= prod_inst; schema_req= req_inst; schema_tvars= tvars_set}
+    { schema_id= sid
+    ; schema_prod= prod_inst
+    ; schema_req= req_inst
+    ; schema_tvars= tvars_set }
   in
   (* We append it to all the schema for the class *)
   let schem_decl_class =
-    match TypeClass.Map.find_opt prod_inst.inst_class genv.schemas with
+    match TypeClass.Map.find_opt prod_class genv.schemas with
     | Some l -> (
         (* Instances already defined, so we check if one of them can be unified
            with us *)
         let unified_existing_inst =
           List.find_opt
-            (fun (sdecl : schema) ->
+            (fun sdecl ->
               (* Replace all quantified var of [sdecl.prod] by weak vars *)
               let instvars =
                 let sigma = sfresh_subst sdecl.schema_tvars in
-                List.map (subst sigma) sdecl.schema_prod.inst_args
+                List.map (subst sigma) (snd sdecl.schema_prod)
               in
               (* same for [prod_typs] *)
               let prod_typs =
                 let sigma = sfresh_subst tvars_set in
-                List.map (subst sigma) prod_inst.inst_args
+                List.map (subst sigma) prod_args
               in
               (* And test if we can unify them. *)
               List.for_all2 can_unify instvars prod_typs )
@@ -431,27 +438,36 @@ let check_instance genv tprog req_inst prod_inst fun_decls permissive decl =
   (* And modify the global environment *)
   let genv =
     { genv with
-      schemas=
-        TypeClass.Map.add prod_inst.inst_class schem_decl_class genv.schemas }
+      schemas= TypeClass.Map.add prod_class schem_decl_class genv.schemas }
   in
   (* This is the class declaration we implement *)
-  let class_decl = TypeClass.Map.find prod_inst.inst_class genv.tclass in
+  let class_decl = TypeClass.Map.find prod_class genv.tclass in
   (* sigma in the substitution from each argument of the class α
      to each type arguement of our instance τ *)
   let sigma =
     let sigma = lfresh_subst class_decl.tclass_tvars in
     List.iter2
       (fun var typ -> unify (Hashtbl.find sigma var) typ)
-      class_decl.tclass_tvars prod_inst.inst_args ;
+      class_decl.tclass_tvars prod_args ;
     sigma
   in
-  (* This is the environment in witch we have to check the functions in [fun_decls] *)
-  let lenv = {tvars= tvars_map; instances= req_inst; vartype= SMap.empty} in
-  let rec loop fdone tprog next_decls =
-    if next_decls = [] then (tprog, fdone)
+  let instances = instance_list_to_lenv req_inst in
+  (* This is the environment in which we have to check the functions in [fun_decls] *)
+  let lenv = {tvars= tvars_map; instances; vartype= SMap.empty} in
+  let rec loop fun_impls fdone next_decls =
+    if next_decls = [] then (fun_impls, fdone)
     else
-      let fun_body, next_decls = get_functions_list None next_decls in
-      let fname = List.hd fun_body |> fun (x, _, _, _) -> x in
+      let fname, fun_body, next_decls = get_functions_list None next_decls in
+      let fname =
+        match fname with
+        | Some f ->
+            f
+        | None ->
+            (* [next_decls] is not [] and we can only have function declarations
+               in [next_decls] thanks to the parser. So we cannot be in this
+               branch. *)
+            assert false
+      in
       if SSet.mem fname fdone then
         TypingError.function_already_def_in_inst lenv fname prod_inst decl
       else
@@ -465,52 +481,54 @@ let check_instance genv tprog req_inst prod_inst fun_decls permissive decl =
             let fimpl =
               check_fun_equations genv lenv
                 (fun_id, arity, ret_typ, args_typ)
-                fun_body permissive (Some prod_inst)
+                fun_body permissive
             in
-            let fun_impl_list =
-              match SMap.find_opt fname tprog with
-              | None ->
-                  [fimpl]
-              | Some l ->
-                  fimpl :: l
+            let fun_impls =
+              Function.Map.add fimpl.fun_impl_id fimpl fun_impls
             in
-            (* and add it to the program *)
-            let tprog = SMap.add fname fun_impl_list tprog in
-            loop (SSet.add fname fdone) tprog next_decls
+            let fdone = SSet.add fname fdone in
+            loop fun_impls fdone next_decls
         | None ->
-            TypingError.function_not_in_class fname prod_inst.inst_class decl
+            TypingError.function_not_in_class fname prod_class decl
   in
-  let tprog, fdone = loop SSet.empty tprog fun_decls in
+  let schema_impl_funs, fdone = loop Function.Map.empty SSet.empty fun_decls in
   if SMap.for_all (fun x _ -> SSet.mem x fdone) class_decl.tclass_decls then
-    (genv, tprog)
+    (genv, {schema_impl_funs; schema_impl_id= sid})
   else
-    TypingError.missing_functions lenv prod_inst fdone prod_inst.inst_class
-      class_decl decl
+    TypingError.missing_functions lenv prod_inst fdone prod_class class_decl
+      decl
 
-let rec check_prog permissive genv tprog (p : Ast.program) :
-    global_env * tprogram =
+let rec check_prog permissive genv funs_impl schemas_impl main_id p =
   match p with
-  | [] ->
-      (genv, tprog)
+  | [] -> (
+    match main_id with
+    | Some id ->
+        {main_id= id; funs_impl; schemas_impl; genv}
+    | None ->
+        TypingError.missing_main () )
   | decl :: tl -> (
     match decl.v with
     | Data (dname, typ_vars, cstrs) ->
         let genv = check_symbol genv dname typ_vars cstrs decl in
-        check_prog permissive genv tprog tl
+        check_prog permissive genv funs_impl schemas_impl main_id tl
     | Class (cname, typ_args, fundecls) ->
         let genv = check_class genv cname typ_args fundecls decl in
-        check_prog permissive genv tprog tl
+        check_prog permissive genv funs_impl schemas_impl main_id tl
     | FunDecl (fname, _, _) ->
         TypingError.missing_fun_type_decl fname decl
     | TypeDecl _ ->
-        check_fun_decl genv tprog decl tl permissive
+        check_fun_decl permissive genv funs_impl schemas_impl main_id decl tl
     | Instance ((req_inst, prod_int), funimpls) ->
-        let genv, tprog =
-          check_instance genv tprog req_inst prod_int funimpls permissive decl
+        let genv, schema_impl =
+          check_instance genv req_inst prod_int funimpls permissive decl
         in
-        check_prog permissive genv tprog tl )
+        let schemas_impl =
+          Schema.Map.add schema_impl.schema_impl_id schema_impl schemas_impl
+        in
+        check_prog permissive genv funs_impl schemas_impl main_id tl )
 
-and check_fun_decl genv tprog decl next_decls permissive =
+and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
+    next_decls =
   match decl.v with
   | TypeDecl (fun_name, qvars, instl, args, ret) -> (
     match Function.exists fun_name with
@@ -518,43 +536,20 @@ and check_fun_decl genv tprog decl next_decls permissive =
         TypingError.function_already_exists fun_name decl
     | None ->
         (* We compute the list of type variable *)
-        let tvars, _ =
+        let tvars, _, tvarsmap =
           different_var_types
             (fun x -> TypingError.typ_var_already_decl_in_fun x fun_name decl)
             qvars
         in
-        let tvarsmap =
-          List.fold_left2
-            (fun acc tqvar name -> SMap.add name tqvar acc)
-            SMap.empty tvars qvars
-        in
         (* And add them to the environment to check that instances are
            well-formed.*)
-        let lenv = {tvars= tvarsmap; instances= []; vartype= SMap.empty} in
+        let lenv =
+          {tvars= tvarsmap; instances= TypeClass.Map.empty; vartype= SMap.empty}
+        in
         (* We compute the list of instances of the function, to do so, we check
            that each of them is well-formed. *)
         let fun_insts =
-          List.map
-            (fun coid ->
-              (* coid (class or instance decl) refers to a single instance *)
-              let (CoI_Decl (cls_name, arg_typs)) = coid.v in
-              match TypeClass.exists cls_name with
-              | Some class_id ->
-                  let decl = TypeClass.Map.find class_id genv.tclass in
-                  (* We found the class in the [genv]. Let's check that each
-                     type of the instance is well-formed *)
-                  let arity, args =
-                    List.fold_left_map
-                      (fun i typ -> (i + 1, wf_type genv lenv typ))
-                      0 arg_typs
-                  in
-                  (* Check that arity is the same *)
-                  if arity <> decl.tclass_arity then
-                    TypingError.class_arity_mismatch class_id decl arity coid
-                  else {inst_class= class_id; inst_args= args}
-              | None ->
-                  TypingError.unknown_class cls_name decl )
-            instl
+          List.map (fun coid -> check_wf_instance genv lenv coid) instl
         in
         let fid = Function.fresh fun_name in
         (* We build the function declaration structure *)
@@ -569,10 +564,13 @@ and check_fun_decl genv tprog decl next_decls permissive =
           ; fun_tvars= QTypeVar.Set.of_list tvars }
         in
         (* And add it to the global environment *)
-        let genv = {genv with funs= Function.Map.add fid fdecl genv.funs} in
+        let genv =
+          {genv with funs= Function.Map.add fid (Either.Left fdecl) genv.funs}
+        in
         (* We add the instances to the environment *)
-        let lenv = {lenv with instances= fun_insts} in
-        let fun_body, next_decls =
+        let instances = instance_list_to_lenv fun_insts in
+        let lenv = {lenv with instances} in
+        let _, fun_body, next_decls =
           get_functions_list (Some fun_name) next_decls
         in
         if fun_body = [] then TypingError.missing_fun_impl fun_name decl
@@ -580,14 +578,14 @@ and check_fun_decl genv tprog decl next_decls permissive =
           let fimpl =
             check_fun_equations genv lenv
               (fid, fdecl.fun_arity, fdecl.fun_ret, fdecl.fun_args)
-              fun_body permissive None
+              fun_body permissive
           in
           (* and add it to the program *)
-          let tprog = SMap.add fun_name [fimpl] tprog in
-          check_prog permissive genv tprog next_decls )
+          let funs_impl = Function.Map.add fimpl.fun_impl_id fimpl funs_impl in
+          let main_id = if fun_name = "main" then Some fid else main_id in
+          check_prog permissive genv funs_impl schemas_impl main_id next_decls )
   | _ ->
       assert false
 
 let check_program permissive p =
-  let genv, prog = check_prog permissive default_genv SMap.empty p in
-  if SMap.mem "main" prog then (genv, prog) else TypingError.missing_main p
+  check_prog permissive default_genv Function.Map.empty Schema.Map.empty None p

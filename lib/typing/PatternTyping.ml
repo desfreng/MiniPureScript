@@ -45,10 +45,12 @@ and compute_pattern_type lenv genv (pat : Ast.pattern) =
     | Some (cid, sid) ->
         let decl = Symbol.Map.find sid genv.symbols in
         let found_ar = List.length args in
-        let constr_decl = Constructor.Map.find cid decl.symbol_constr in
-        if constr_decl.constr_arity <> found_ar then
+        let ((constr_args, constr_arity) as cdecl) =
+          Constructor.Map.find cid decl.symbol_constr
+        in
+        if constr_arity <> found_ar then
           (* Not the right amount of argument to build this type *)
-          TypingError.constr_arity_mismatch cid constr_decl found_ar pat
+          TypingError.constr_arity_mismatch cid cdecl found_ar pat
         else
           (* sigma is a substitution of variable used of the type to fresh one. *)
           let sigma = lfresh_subst decl.symbol_tvars in
@@ -66,7 +68,7 @@ and compute_pattern_type lenv genv (pat : Ast.pattern) =
           let constr_args =
             (* [args_typ] is the list of type of the constructor, with all the
                variables in [decl.vars]. *)
-            let args_typ = constr_decl.constr_args in
+            let args_typ = constr_args in
             (* So, after the substitution, no variable are in [decl.vars]. *)
             List.map (subst sigma) args_typ
           in

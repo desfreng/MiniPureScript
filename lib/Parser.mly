@@ -90,7 +90,7 @@ instance:
 
 cio_decl:
 | cstr=UINDENT arg=atype*
-    { mk_ast_l (CoI_Decl (cstr, arg)) $loc }
+    { mk_ast (CoI_Decl (cstr, arg)) $loc }
 
 atype:
 | c=UINDENT         { mk_ast (AstTData (c, [])) $loc }

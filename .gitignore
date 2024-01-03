@@ -351,3 +351,6 @@ TSWLatexianTemp*
 
 # glossaries
 *.glstex
+
+**/*.dhall
+.purs-repl

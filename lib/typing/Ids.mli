@@ -30,6 +30,22 @@ module QTypeVar : sig
   type set = Set.t
 end
 
+(** Id of a schema *)
+module Schema : sig
+  type t
+
+  val fresh : unit -> t
+  (** [fresh n] creates a new schema id, and bind it to [n]. [n] must be unique. *)
+
+  module Map : Map.S with type key = t
+
+  module Set : Set.S with type elt = t
+
+  type 'a map = 'a Map.t
+
+  type set = Set.t
+end
+
 (** Id of a type symbol *)
 module Symbol : sig
   type t

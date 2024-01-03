@@ -1,29 +1,10 @@
-open Ast
 open TAst
 
-(** This type encapsulate all the informations needed to resolve an instance,
-    later in the computation. We first need to accumulate the constraints on
-    the type variables. *)
-type instance_to_resolve =
-  { gamma: local_env (* The context in which we need to resolve it *)
-  ; i: instance (* The instance to resolve *)
-  ; expr: expr (* The expression that lead to this resolution *) }
+exception
+  UnresolvedInstance of
+    (TypeClass.t * ttyp list) * (TypeClass.t * ttyp list) list
 
-(** [instance2resolve lenv sigma decl expr] computes the list of instances to
-    resolve in order to call the function [decl] in the local environment [lenv].
-    [sigma] is the permutation computed from the unification of the types and
-    [expr] is the location that lead to the resolution. *)
-let instance2resolve lenv sigma decl expr =
-  List.map
-    (fun inst ->
-      { gamma= lenv
-      ; i=
-          { inst_class= inst.inst_class
-          ; inst_args= List.map (subst sigma) inst.inst_args }
-      ; expr } )
-    decl.fun_insts
-
-exception UnresolvedInstance of instance * instance list
+exception Resolved of res_inst_kind
 
 (** Remove non quantified variable with quantified one that are not in the
     local environment *)
@@ -46,68 +27,79 @@ let sanitize tl =
   in
   List.map loop tl
 
+let resolve_local_inst lenv (to_res_cls, to_res_args) =
+  (* We check if [inst] is in the local env *)
+  match TypeClass.Map.find_opt to_res_cls lenv.instances with
+  | Some l -> (
+    (* l is the list of all instances of typeclass [to_res_cls] in the local
+       environment. *)
+    try
+      List.iter
+        (fun (inst_arg_id, _, inst_args) ->
+          if List.for_all2 can_unify (List.map copy to_res_args) inst_args then
+            raise (Resolved (ArgumentInstance inst_arg_id)) )
+        l ;
+      None
+    with Resolved r -> Some r )
+  | None ->
+      None
+
+let rec resolve_global_inst genv lenv (to_res_cls, to_res_args) =
+  (* We search for an instance or a schema in the global env that match
+     which is compatible with the instance we need to resolve. Because we
+     "leave" the local environment, we have to sanitize our type variables:
+     All Weak Variables, waiting to be unified, are transformed as
+     Quantified Variable. *)
+  let typ_list_bis = sanitize to_res_args in
+  match TypeClass.Map.find_opt to_res_cls genv.schemas with
+  | Some l -> (
+    (* [l] is the list of schema for the class [cls_name] *)
+    try
+      List.iter
+        (fun sdecl ->
+          (* We replace all variables occurring in the type of the instance *)
+          let sigma = sfresh_subst sdecl.schema_tvars in
+          let prod_class, prod_args = sdecl.schema_prod in
+          let prod_args = List.map (subst sigma) prod_args in
+          if List.for_all2 can_unify typ_list_bis prod_args then
+            if sdecl.schema_req = [] then
+              (* This is a global instance *)
+              raise (Resolved (GlobalInstance sdecl.schema_id))
+            else
+              let req_inst =
+                List.map
+                  (fun (req_class, req_args) ->
+                    (req_class, List.map (subst sigma) req_args) )
+                  sdecl.schema_req
+              in
+              try
+                (* we try to resolve the required instances *)
+                let args = List.map (resolve_inst genv lenv) req_inst in
+                raise (Resolved (GlobalSchema (sdecl.schema_id, args)))
+              with UnresolvedInstance (i, acc) ->
+                raise (UnresolvedInstance (i, (prod_class, prod_args) :: acc))
+          )
+        l ;
+      None
+    with Resolved r -> Some r )
+  | None ->
+      None
+
+and resolve_inst genv lenv inst =
+  match resolve_local_inst lenv inst with
+  | Some r ->
+      r
+  | None -> (
+    match resolve_global_inst genv lenv inst with
+    | Some r ->
+        r
+    | None ->
+        raise (UnresolvedInstance (inst, [])) )
+
 (** [resolve_i2r] tries to resolve the "instance to resolve" in the global
     environment [genv] *)
-let resolve_i2r genv i2r =
-  let rec resinst lenv to_res =
-    (* We check if [inst] is in the local env *)
-    match
-      List.find_opt
-        (fun inst ->
-          if
-            inst.inst_class = to_res.inst_class
-            && List.for_all2 can_unify
-                 (List.map copy to_res.inst_args)
-                 inst.inst_args
-          then (* We found a matching instance in the function arguments *)
-            true
-          else false )
-        lenv.instances
-    with
-    | Some _ ->
-        () (* It is resolved *)
-    | None -> (
-        (* Otherwise, we have to find an instance or a schema to resolve it in
-           the global env. To do so, we first sanitize our type variables. *)
-        let typ_list_bis = sanitize to_res.inst_args in
-        match TypeClass.Map.find_opt to_res.inst_class genv.schemas with
-        | Some l -> (
-          (* [l] is the list of schema for the class [cls_name] *)
-          match
-            List.find_opt
-              (fun (sdecl : schema) ->
-                (* We replace all variables occurring in the type of the instance *)
-                let sigma = sfresh_subst sdecl.schema_tvars in
-                let instvars =
-                  List.map (subst sigma) sdecl.schema_prod.inst_args
-                in
-                if List.for_all2 can_unify typ_list_bis instvars then (
-                  List.iter2 unify to_res.inst_args instvars ;
-                  (* We apply the substitution for the required instances *)
-                  let req_inst =
-                    List.map
-                      (fun req_inst ->
-                        { req_inst with
-                          inst_args= List.map (subst sigma) req_inst.inst_args
-                        } )
-                      sdecl.schema_req
-                  in
-                  try
-                    (* we try to resolve the required instances *)
-                    List.iter (resinst lenv) req_inst ;
-                    true
-                  with UnresolvedInstance (i, acc) ->
-                    raise (UnresolvedInstance (i, sdecl.schema_prod :: acc)) )
-                else false )
-              l
-          with
-          | Some _ ->
-              ()
-          | None ->
-              raise (UnresolvedInstance (to_res, [])) )
-        | None ->
-            raise (UnresolvedInstance (to_res, [])) )
-  in
-  try resinst i2r.gamma i2r.i
-  with UnresolvedInstance (i, stack) ->
-    TypingError.unresolved_instance i2r.gamma i stack i2r.expr
+let resolve genv lenv inst pos =
+  lazy
+    ( try resolve_inst genv lenv inst
+      with UnresolvedInstance (i, stack) ->
+        TypingError.unresolved_instance lenv i stack pos )

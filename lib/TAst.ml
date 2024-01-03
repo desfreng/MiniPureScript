@@ -52,7 +52,7 @@ let sfresh_subst set =
 
 (** The structure carried by the exception *)
 type unif_error =
-  | SymbolMismatch of {symb1: string; symb2: string}
+  | SymbolMismatch of {symb1: Symbol.t; symb2: Symbol.t}
   | VariableOccuring of {var: ttyp; typ: ttyp}
   | NotSameTypes of {t1: ttyp; t2: ttyp}
 
@@ -68,11 +68,7 @@ let rec unify t1 t2 =
   match (t1, t2) with
   | TSymbol (sid1, args1), TSymbol (sid2, args2) ->
       if sid1 = sid2 then List.iter2 unify args1 args2
-      else
-        raise
-          (UnificationError
-             (SymbolMismatch {symb1= Symbol.name sid1; symb2= Symbol.name sid2})
-          )
+      else raise (UnificationError (SymbolMismatch {symb1= sid1; symb2= sid2}))
   | TQuantifiedVar s1, TQuantifiedVar s2 ->
       if s1 = s2 then () else raise (UnificationError (NotSameTypes {t1; t2}))
   | TVar v, t ->
@@ -130,6 +126,16 @@ module Constant : Constant = struct
   type set = Set.t
 end
 
+type res_inst_kind =
+  | (* This refers to the [i]th instance given as argument of the function. *)
+    ArgumentInstance of int
+  | (* This refers an instance defined in the global environment. *)
+    GlobalInstance of Schema.t
+  | (* This refers a schema instancied with the following instance arguments. *)
+    GlobalSchema of (Schema.t * res_inst_kind list)
+
+type resolved_inst = res_inst_kind Lazy.t
+
 (** Expression type, with every type possible. *)
 type texpr = {expr: texpr_kind; expr_typ: ttyp}
 
@@ -138,7 +144,16 @@ and texpr_kind =
   | TVariable of Variable.t
   | TNeg of texpr
   | TBinOp of texpr * Ast.binop * texpr
-  | TApp of Function.t * texpr list (* Function application *)
+  | (* "Regular" Function application *)
+    TRegularFunApp of
+      Function.t (* the function id *)
+      * resolved_inst list (* the list of instances needed *)
+      * texpr list (* the list of argument *)
+  | (* Type-Class Function application *)
+    TTypeClassFunApp of
+      resolved_inst (* the instance in which the function called is defined *)
+      * Function.t (* the function id *)
+      * texpr list (* the list of argument *)
   | TConstructor of Constructor.t * texpr list (* Constructor application *)
   | TIf of texpr * texpr * texpr
   | TBlock of texpr list
@@ -165,24 +180,22 @@ and tpat_kind =
   | TPatConstant of Constant.t
   | TPatConstructor of Constructor.t * tpattern list
 
-type constructor = {constr_args: ttyp list; constr_arity: int}
-
 type symbol =
-  { symbol_constr: constructor Constructor.map  (** Defined constructors *)
+  { symbol_constr: (ttyp list * int) Constructor.map  (** Defined constructors *)
   ; symbol_tvars: QTypeVar.t list
         (** type variables used in the symbol type in order *)
   ; symbol_arity: int  (** Arity of the symbol type *) }
 
-type instance = {inst_class: TypeClass.t; inst_args: ttyp list}
-
 type schema =
-  { schema_tvars: QTypeVar.set  (** Type variable occurring in this schema *)
-  ; schema_req: instance list  (** Required instances *)
-  ; schema_prod: instance  (** Instance produced *) }
+  { schema_id: Schema.t  (** Unique id of this schema. *)
+  ; schema_tvars: QTypeVar.set  (** Type variable occurring in this schema *)
+  ; schema_req: (TypeClass.t * ttyp list) list  (** Required instances *)
+  ; schema_prod: TypeClass.t * ttyp list  (** Instance produced *) }
 
 type funct =
   { fun_tvars: QTypeVar.set  (** Type variables of the function declaration *)
-  ; fun_insts: instance list  (** The instances on which the functions depend *)
+  ; fun_insts: (TypeClass.t * ttyp list) list
+        (** The instances on which the functions depend *)
   ; fun_args: ttyp list  (** Expected type of the arguments *)
   ; fun_arity: int  (** Number of argument of the function *)
   ; fun_ret: ttyp  (** Return type of the function *) }
@@ -202,13 +215,15 @@ type local_env =
         (** Maps all type variable defined in the local environment to their id. *)
   ; vartype: (ttyp * Variable.t) SMap.t
         (** Maps the variable name to their type and unique id *)
-  ; instances: instance list
-        (** Instances available in the local environment *) }
+  ; instances: (int * TypeClass.t * ttyp list) list TypeClass.map
+        (** Instances available in the local environment with their argument position *)
+  }
 
 type global_env =
   { symbols: symbol Symbol.map
         (** Maps each symbol type name to their declaration *)
-  ; funs: funct Function.map  (** Maps each function to its declaration *)
+  ; funs: (funct, TypeClass.t) Either.t Function.map
+        (** Maps each function to its declaration: as a function or in a type class. *)
   ; tclass: tclass TypeClass.map  (** Maps each class name to its declaration *)
   ; schemas: schema list TypeClass.map
         (** Maps each class with the list of declared schemas which can
@@ -217,159 +232,22 @@ type global_env =
   }
 
 (** Describe the implementation of a function *)
-type fimpl =
-  { fimpl_vars: Variable.t list (* argument of the function, in order *)
-  ; fimpl_arity: int (* number of argument *)
-  ; fimpl_expr: texpr (* body of the function *)
-  ; associed_instance: instance option
-        (* the instance in witch the function as been declared *) }
+type fun_impl =
+  { fun_impl_id: Function.t (* id of the function implemented *)
+  ; fun_impl_vars: Variable.t list (* argument of the function, in order *)
+  ; fun_impl_arity: int (* number of argument *)
+  ; fun_impl_expr: texpr (* body of the function *) }
 
-type tprogram = fimpl list SMap.t
-(* Maps each function name to the list of all implantations. *)
+type schema_impl =
+  { schema_impl_id: Schema.t (* id of the shema implemented *)
+  ; schema_impl_funs: fun_impl Function.map
+        (* maps each function defined in this schema to its implementation. *)
+  }
 
-(** [_cbs] create a built-in symbol of arity 0 *)
-let _cbs name =
-  ( name
-  , {symbol_constr= Constructor.Map.empty; symbol_tvars= []; symbol_arity= 0} )
-
-let _unit_n, _bool_n, _int_n, _str_n, _effect_n =
-  ( Symbol.fresh "Unit"
-  , Symbol.fresh "Boolean"
-  , Symbol.fresh "Int"
-  , Symbol.fresh "String"
-  , Symbol.fresh "Effect" )
-
-(* The builtin types *)
-let unit_t = TSymbol (_unit_n, [])
-
-let bool_t = TSymbol (_bool_n, [])
-
-let int_t = TSymbol (_int_n, [])
-
-let string_t = TSymbol (_str_n, [])
-
-let effect_t t = TSymbol (_effect_n, [t])
-
-let _show_fun_name = "show"
-
-(* The builtin functions *)
-let not_fid, mod_fid, log_fid, pure_fid, show_fid =
-  ( Function.fresh "not"
-  , Function.fresh "mod"
-  , Function.fresh "log"
-  , Function.fresh "pure"
-  , Function.fresh _show_fun_name )
-
-let _show_class_name = "Show"
-
-let _show_cls_n = TypeClass.fresh _show_class_name
-
-(** A default global environment with:
-    - builtin types: Unit, Boolean, Int, String, and Effect a
-    - no constructors
-    - builtin function: not, mod, log, pure
-    - builtin class: Show a
-    - builtin instances: Show Int, Show String
-    - no schemas. *)
-let default_genv =
-  { symbols=
-      List.fold_left
-        (fun m (k, v) -> Symbol.Map.add k v m)
-        Symbol.Map.empty
-        [ _cbs _unit_n
-        ; _cbs _bool_n
-        ; _cbs _int_n
-        ; _cbs _str_n
-        ; ( _effect_n
-          , { symbol_constr= Constructor.Map.empty
-            ; symbol_tvars= [QTypeVar.fresh ()]
-            ; symbol_arity= 1 } ) ]
-  ; funs=
-      List.fold_left
-        (fun m (k, v) -> Function.Map.add k v m)
-        Function.Map.empty
-        [ ( not_fid
-          , { fun_tvars= QTypeVar.Set.empty
-            ; fun_insts= []
-            ; fun_args= [bool_t]
-            ; fun_arity= 1
-            ; fun_ret= bool_t } )
-        ; ( mod_fid
-          , { fun_tvars= QTypeVar.Set.empty
-            ; fun_insts= []
-            ; fun_args= [int_t; int_t]
-            ; fun_arity= 2
-            ; fun_ret= int_t } )
-        ; ( log_fid
-          , { fun_tvars= QTypeVar.Set.empty
-            ; fun_insts= []
-            ; fun_args= [string_t]
-            ; fun_arity= 1
-            ; fun_ret= effect_t unit_t } )
-        ; ( pure_fid
-          , let v = QTypeVar.fresh () in
-            { fun_tvars= QTypeVar.Set.singleton v
-            ; fun_insts= []
-            ; fun_args= [TQuantifiedVar v]
-            ; fun_arity= 1
-            ; fun_ret= effect_t (TQuantifiedVar v) } )
-        ; ( show_fid
-          , let v = QTypeVar.fresh () in
-            { fun_tvars= QTypeVar.Set.singleton v
-            ; fun_insts=
-                [{inst_class= _show_cls_n; inst_args= [TQuantifiedVar v]}]
-            ; fun_args= [TQuantifiedVar v]
-            ; fun_arity= 1
-            ; fun_ret= string_t } ) ]
-  ; tclass=
-      (let v = QTypeVar.fresh () in
-       TypeClass.Map.singleton _show_cls_n
-         { tclass_arity= 1
-         ; tclass_tvars= [v]
-         ; tclass_decls=
-             SMap.singleton _show_fun_name ([TQuantifiedVar v], 1, string_t) }
-      )
-  ; schemas=
-      TypeClass.Map.singleton _show_cls_n
-        [ { schema_req= []
-          ; schema_prod= {inst_class= _show_cls_n; inst_args= [int_t]}
-          ; schema_tvars= QTypeVar.Set.empty }
-        ; { schema_req= []
-          ; schema_prod= {inst_class= _show_cls_n; inst_args= [bool_t]}
-          ; schema_tvars= QTypeVar.Set.empty } ] }
-
-(** A default local environment with a constant unit. *)
-let default_lenv =
-  { tvars= SMap.empty
-  ; instances= []
-  ; vartype=
-      (let v = Variable.fresh "unit" in
-       SMap.singleton "unit" (unit_t, v) ) }
-
-(* Functions to tests expression types *)
-let is_unit_t t =
-  match unfold t with
-  | TSymbol (sid, []) when sid = _unit_n ->
-      true
-  | _ ->
-      false
-
-let is_bool_t t =
-  match unfold t with
-  | TSymbol (sid, []) when sid = _bool_n ->
-      true
-  | _ ->
-      false
-
-let is_int_t t =
-  match unfold t with TSymbol (sid, []) when sid = _int_n -> true | _ -> false
-
-let is_string_t t =
-  match unfold t with TSymbol (sid, []) when sid = _str_n -> true | _ -> false
-
-let is_effect_t t =
-  match unfold t with
-  | TSymbol (sid, [_]) when sid = _effect_n ->
-      true
-  | _ ->
-      false
+type tprogram =
+  { funs_impl: fun_impl Function.map
+        (* maps each "normal" function definition to its implementation *)
+  ; schemas_impl: schema_impl Schema.map
+        (* maps each schema to its implementation *)
+  ; genv: global_env (* The resulting typing environment. *)
+  ; main_id: Function.t (* id of the program entry point *) }

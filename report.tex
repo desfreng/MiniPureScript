@@ -110,10 +110,10 @@ typés dans le fichier \verb|PatternTyping.ml|. Le fichier \verb|CommonTyping.ml
 regroupe des déclarations utilisées par plusieurs fichiers.
 
 On remarque qu'en \ps{} le code de la \autoref{fig:ex} est correct. Alors que
-la variable \verb|x| est de type \verb|List 'a| lors de l'appel de la fonction
-\verb|log| à la ligne $15$, ce code est accepté. En effet, le type de la
+la variable \verb|x| est de type \verb|List Int a| lors de l'appel de la fonction
+\verb|log| à la ligne $16$, ce code est accepté. En effet, le type de la
 variable \verb|x| est résolu à la ligne suivante, \verb|x| est de type
-\verb|List Int|. Ce code illustre que la résolution des instances est réalisée
+\verb|List Int Boolean|. Ce code illustre que la résolution des instances est réalisée
 après l'analyse de l'expression des fonctions. Cette résolution est effectuée
 au sein du fichier \verb|ResolveInstance.ml|.
 
@@ -130,19 +130,29 @@ import Prelude
 import Effect
 import Effect.Console
 
-data List a = Nil | Cons a (List a)
+data List a b = Nil a | Cons b (List a b)
 
-instance Show a => Show (List a) where
-    show Nil = "[]"
-    show (Cons hd tl) = show hd <> "::" <> show tl
+instance (Show a, Show b) => Show (List a b) where
+    show (Nil x) = "(Nil " <> show x <> ")"
+    show (Cons hd tl) = "(Cons " <> show hd <> " " <> show tl <> ")"
 
-main::Effect Unit
-main = let x = Nil in do
-    log (show x)    -- x est de type List 'a
-    (let y = Cons 1 x in log (show y))    -- qui est ici résolu en List Int
-    log (show y)
-    \end{minted}
+main :: Effect Unit
+main = let x = Nil 1 in -- x :: List Int a, with a unknown at this point
+  do
+    log (show x)
+    (let y = Cons true x in log (show y)) -- Here we find that a = Boolean, so x :: List Int Boolean
+    log (show x)
+        \end{minted}
     \caption{Exemple \ps{}.}
     \label{fig:ex}
 \end{figure}
+
+
+
+Compilation :
+
+Les \texttt{Effect a} sont des clôtures retournant une valeur de type \texttt{a}.
+Division par $0$ et modulo par $0$ sont définis comme en PureScript par $0$.
+L'égalité de type \texttt{Unit} est toujours vraie, à l'inverse de la différence.
+
 \end{document}
