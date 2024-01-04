@@ -1,4 +1,4 @@
-open TAst
+open TypedAst
 open DefaultTypingEnv
 
 type pat_matrix =

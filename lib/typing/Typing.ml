@@ -1,4 +1,4 @@
-open TAst
+open TypedAst
 open Ast
 open DefaultTypingEnv
 open CommonTyping
@@ -164,7 +164,7 @@ let check_pats_and_expr permissive genv lenv fid (arity, ret_typ, args_typs)
     (!case_pos, pats, texpr, i2r)
 
 (** [check_fun_equations genv lenv fdecl fun_body] *)
-let check_fun_equations genv lenv (fun_id, fun_impl_arity, ret_typ, args_typ)
+let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
     fun_body permissive =
   (* We type all equations and verify that they are well-formed. *)
   let _, _, mat_pat, i2r =
@@ -172,7 +172,7 @@ let check_fun_equations genv lenv (fun_id, fun_impl_arity, ret_typ, args_typ)
       (fun (eq_id, last_pat_pos, mat_pat, i2r) ((_, _, decl) as f_eq) ->
         let eq_pat_pos, pats, eq, eq_i2r =
           check_pats_and_expr permissive genv lenv fun_id
-            (fun_impl_arity, ret_typ, args_typ)
+            (tfun_arity, ret_typ, args_typ)
             f_eq
         in
         let last_pat_pos =
@@ -201,21 +201,21 @@ let check_fun_equations genv lenv (fun_id, fun_impl_arity, ret_typ, args_typ)
   Monoid.iter (fun i2r -> ignore (Lazy.force i2r)) i2r ;
   (* Everything is ok. So now, we compile our function to an unique
      expression *)
-  let fun_impl_vars =
-    List.init fun_impl_arity (fun i -> Variable.fresh ("in" ^ string_of_int i))
+  let tfun_vars =
+    List.init tfun_arity (fun i -> Variable.fresh ("in" ^ string_of_int i))
   in
   let fargs =
     List.map2
       (fun typ varid -> make_expr (TVariable varid) typ)
-      args_typ fun_impl_vars
+      args_typ tfun_vars
   in
   let decl_list = List.map (fun (_, _, x) -> x) fun_body in
   (* And compile it to an expression *)
-  let fun_impl_expr =
-    compile_function genv ret_typ fargs mat_pat fun_id decl_list
+  let tfun_texpr =
+    Either.Left (compile_function genv ret_typ fargs mat_pat fun_id decl_list)
   in
   (* We build the fimpl structure *)
-  {fun_impl_id= fun_id; fun_impl_vars; fun_impl_arity; fun_impl_expr}
+  {tfun_id= fun_id; tfun_vars; tfun_arity; tfun_texpr}
 
 (** [check_symbol genv symbol_name var_types constrs pos] checks that the symbol
     declaration of [symbol_name] with type argument [var_types] and constructors
@@ -395,7 +395,7 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
     check_wf_instance genv lenv prod_inst
   in
   (* We create a new shema id *)
-  let sid = Schema.fresh () in
+  let sid = Schema.fresh prod_class in
   (* To build the schema *)
   let schem_decl =
     { schema_id= sid
@@ -483,49 +483,47 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
                 (fun_id, arity, ret_typ, args_typ)
                 fun_body permissive
             in
-            let fun_impls =
-              Function.Map.add fimpl.fun_impl_id fimpl fun_impls
-            in
+            let fun_impls = Function.Map.add fimpl.tfun_id fimpl fun_impls in
             let fdone = SSet.add fname fdone in
             loop fun_impls fdone next_decls
         | None ->
             TypingError.function_not_in_class fname prod_class decl
   in
-  let schema_impl_funs, fdone = loop Function.Map.empty SSet.empty fun_decls in
+  let tschema_funs, fdone = loop Function.Map.empty SSet.empty fun_decls in
   if SMap.for_all (fun x _ -> SSet.mem x fdone) class_decl.tclass_decls then
-    (genv, {schema_impl_funs; schema_impl_id= sid})
+    (genv, {tschema_id= sid; tschema_funs})
   else
     TypingError.missing_functions lenv prod_inst fdone prod_class class_decl
       decl
 
-let rec check_prog permissive genv funs_impl schemas_impl main_id p =
+let rec check_prog permissive genv tfuns tschemas main_id p =
   match p with
   | [] -> (
     match main_id with
     | Some id ->
-        {main_id= id; funs_impl; schemas_impl; genv}
+        {main_id= id; tfuns; tschemas; genv}
     | None ->
         TypingError.missing_main () )
   | decl :: tl -> (
     match decl.v with
     | Data (dname, typ_vars, cstrs) ->
         let genv = check_symbol genv dname typ_vars cstrs decl in
-        check_prog permissive genv funs_impl schemas_impl main_id tl
+        check_prog permissive genv tfuns tschemas main_id tl
     | Class (cname, typ_args, fundecls) ->
         let genv = check_class genv cname typ_args fundecls decl in
-        check_prog permissive genv funs_impl schemas_impl main_id tl
+        check_prog permissive genv tfuns tschemas main_id tl
     | FunDecl (fname, _, _) ->
         TypingError.missing_fun_type_decl fname decl
     | TypeDecl _ ->
-        check_fun_decl permissive genv funs_impl schemas_impl main_id decl tl
+        check_fun_decl permissive genv tfuns tschemas main_id decl tl
     | Instance ((req_inst, prod_int), funimpls) ->
         let genv, schema_impl =
           check_instance genv req_inst prod_int funimpls permissive decl
         in
         let schemas_impl =
-          Schema.Map.add schema_impl.schema_impl_id schema_impl schemas_impl
+          Schema.Map.add schema_impl.tschema_id schema_impl tschemas
         in
-        check_prog permissive genv funs_impl schemas_impl main_id tl )
+        check_prog permissive genv tfuns schemas_impl main_id tl )
 
 and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
     next_decls =
@@ -581,11 +579,11 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
               fun_body permissive
           in
           (* and add it to the program *)
-          let funs_impl = Function.Map.add fimpl.fun_impl_id fimpl funs_impl in
+          let funs_impl = Function.Map.add fimpl.tfun_id fimpl funs_impl in
           let main_id = if fun_name = "main" then Some fid else main_id in
           check_prog permissive genv funs_impl schemas_impl main_id next_decls )
   | _ ->
       assert false
 
 let check_program permissive p =
-  check_prog permissive default_genv Function.Map.empty Schema.Map.empty None p
+  check_prog permissive default_genv default_fun_impl default_schema_impl None p

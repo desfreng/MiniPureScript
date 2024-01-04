@@ -23,8 +23,6 @@ module TypeVar = UniqueId (struct end)
 
 module QTypeVar = UniqueId (struct end)
 
-module Schema = UniqueId (struct end)
-
 module UniqueNamedId (M : sig end) = struct
   type t = string
 
@@ -107,6 +105,31 @@ module Constructor = struct
 
   module Map = Map.Make (String)
   module Set = Set.Make (String)
+
+  type 'a map = 'a Map.t
+
+  type set = Set.t
+end
+
+module Schema = struct
+  type t = int
+
+  let schema_2_typeclass = Hashtbl.create 17
+
+  let fresh =
+    let cpt = ref 0 in
+    fun tc ->
+      incr cpt ;
+      let id = !cpt in
+      Hashtbl.add schema_2_typeclass id tc ;
+      id
+
+  let pp = Format.pp_print_int
+
+  let typeclass t = Hashtbl.find schema_2_typeclass t
+
+  module Map = Map.Make (Int)
+  module Set = Set.Make (Int)
 
   type 'a map = 'a Map.t
 

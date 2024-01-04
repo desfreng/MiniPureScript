@@ -1,9 +1,18 @@
-val pp_cst : Format.formatter -> TAst.Constant.t -> unit
+val setup_pp_ttyp :
+     ?atomic:bool
+  -> TypedAst.local_env
+  -> TypedAst.ttyp list
+  -> Format.formatter
+  -> TypedAst.ttyp
+  -> unit
 
-val pp_binop : Format.formatter -> Ast.binop -> unit
+val setup_pp_inst :
+     TypedAst.local_env
+  -> (TypedAst.TypeClass.t * TypedAst.ttyp list) list
+  -> Format.formatter
+  -> TypedAst.TypeClass.t * TypedAst.ttyp list
+  -> unit
 
-val pp_res_inst : Format.formatter -> TAst.res_inst_kind -> unit
+val pp_tprog : Format.formatter -> TypedAst.tprogram -> unit
 
-val pp : Format.formatter -> TAst.texpr -> unit
-
-val pp_prog : Format.formatter -> TAst.tprogram -> unit
+val pp_aprog : Format.formatter -> AllocAst.aprogram -> unit

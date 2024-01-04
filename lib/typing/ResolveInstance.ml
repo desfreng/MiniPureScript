@@ -1,4 +1,4 @@
-open TAst
+open TypedAst
 
 exception
   UnresolvedInstance of

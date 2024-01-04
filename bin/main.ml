@@ -62,7 +62,10 @@ let () =
       if !parse_only then exit 0
       else
         let tprog = Typing.check_program !permissive_decl prog in
-        if !type_only then exit 0 else PP.pp_prog Format.std_formatter tprog
+        if !type_only then exit 0
+        else
+          let aprog = Allocation.allocate_tprogram tprog in
+          PP.pp_aprog Format.std_formatter aprog
     with
     | Lexer.LexingError (terr, pos)
     | Ast.UnexpectedText (terr, pos)

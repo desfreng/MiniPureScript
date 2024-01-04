@@ -232,22 +232,21 @@ type global_env =
   }
 
 (** Describe the implementation of a function *)
-type fun_impl =
-  { fun_impl_id: Function.t (* id of the function implemented *)
-  ; fun_impl_vars: Variable.t list (* argument of the function, in order *)
-  ; fun_impl_arity: int (* number of argument *)
-  ; fun_impl_expr: texpr (* body of the function *) }
+type tfun =
+  { tfun_id: Function.t (* id of the function implemented *)
+  ; tfun_vars: Variable.t list (* argument of the function, in order *)
+  ; tfun_arity: int (* number of argument *)
+  ; tfun_texpr: (texpr, string) Either.t (* body of the function *) }
 
-type schema_impl =
-  { schema_impl_id: Schema.t (* id of the shema implemented *)
-  ; schema_impl_funs: fun_impl Function.map
+type tschema =
+  { tschema_id: Schema.t (* id of the shema implemented *)
+  ; tschema_funs: tfun Function.map
         (* maps each function defined in this schema to its implementation. *)
   }
 
 type tprogram =
-  { funs_impl: fun_impl Function.map
+  { tfuns: tfun Function.map
         (* maps each "normal" function definition to its implementation *)
-  ; schemas_impl: schema_impl Schema.map
-        (* maps each schema to its implementation *)
+  ; tschemas: tschema Schema.map (* maps each schema to its implementation *)
   ; genv: global_env (* The resulting typing environment. *)
   ; main_id: Function.t (* id of the program entry point *) }

@@ -1,4 +1,4 @@
-open TAst
+open TypedAst
 open DefaultTypingEnv
 
 (** [add_vartype_to_lenv] add the binding about the variable [v_name] of type

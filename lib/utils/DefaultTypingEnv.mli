@@ -1,23 +1,35 @@
-val unit_t : TAst.ttyp
+val unit_t : TypedAst.ttyp
 
-val bool_t : TAst.ttyp
+val bool_t : TypedAst.ttyp
 
-val int_t : TAst.ttyp
+val int_t : TypedAst.ttyp
 
-val string_t : TAst.ttyp
+val string_t : TypedAst.ttyp
 
-val effect_t : TAst.ttyp -> TAst.ttyp
+val effect_t : TypedAst.ttyp -> TypedAst.ttyp
 
-val default_genv : TAst.global_env
+val is_unit_t : TypedAst.ttyp -> bool
 
-val default_lenv : TAst.local_env
+val is_bool_t : TypedAst.ttyp -> bool
 
-val is_unit_t : TAst.ttyp -> bool
+val is_int_t : TypedAst.ttyp -> bool
 
-val is_bool_t : TAst.ttyp -> bool
+val is_string_t : TypedAst.ttyp -> bool
 
-val is_int_t : TAst.ttyp -> bool
+val is_effect_t : TypedAst.ttyp -> bool
 
-val is_string_t : TAst.ttyp -> bool
+val default_genv : TypedAst.global_env
 
-val is_effect_t : TAst.ttyp -> bool
+val default_lenv : TypedAst.local_env
+
+val default_fun_impl : TypedAst.tfun Ids.Function.map
+
+val default_schema_impl : TypedAst.tschema Ids.Schema.map
+
+val not_fid : TypedAst.Function.t
+
+val mod_fid : TypedAst.Function.t
+
+val log_fid : TypedAst.Function.t
+
+val pure_fid : TypedAst.Function.t

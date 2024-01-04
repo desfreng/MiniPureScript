@@ -1,105 +1,8 @@
-open TAst
+open TypedAst
+open PP
 open Ast
 
 exception TypeError of string * position option
-
-let setup_pp_ttyp ?(atomic = false) lenv t =
-  let tvar_map = Hashtbl.create 17 in
-  let qvar_map = Hashtbl.create 17 in
-  SMap.iter (fun name qvid -> Hashtbl.add qvar_map qvid name) lenv.tvars ;
-  let next_weak_name =
-    let cpt = ref 0 in
-    fun () ->
-      incr cpt ;
-      "'weak" ^ string_of_int !cpt
-  in
-  let next_qvar_name =
-    let n_set =
-      ref
-        (String.fold_left
-           (fun acc c ->
-             let str = String.make 1 c in
-             if SMap.mem str lenv.tvars then acc else SSet.add str acc )
-           SSet.empty "abcdefghijklmnopqrstuvwxyz" )
-    in
-    let cpt = ref 0 in
-    fun () ->
-      if SSet.is_empty !n_set then (
-        incr cpt ;
-        "a" ^ string_of_int !cpt )
-      else
-        let v = SSet.choose !n_set in
-        n_set := SSet.remove v !n_set ;
-        v
-  in
-  let rec name_vars t =
-    match unfold t with
-    | TVar {id; _} -> (
-      match Hashtbl.find_opt tvar_map id with
-      | Some _ ->
-          ()
-      | None ->
-          Hashtbl.add tvar_map id (next_weak_name ()) )
-    | TQuantifiedVar id ->
-        if Hashtbl.mem qvar_map id then ()
-        else Hashtbl.add qvar_map id (next_qvar_name ())
-    | TSymbol (_, args) ->
-        List.iter name_vars args
-  in
-  List.iter name_vars t ;
-  fun ppf t ->
-    let rec pp fst ppf t =
-      match unfold t with
-      | TVar {id; _} ->
-          Format.pp_print_string ppf (Hashtbl.find tvar_map id)
-      | TQuantifiedVar x ->
-          Format.pp_print_string ppf (Hashtbl.find qvar_map x)
-      | TSymbol (sid, []) ->
-          Symbol.pp ppf sid
-      | TSymbol (sid, args) when fst ->
-          Symbol.pp ppf sid ;
-          List.iter (Format.fprintf ppf " %a" (pp false)) args
-      | TSymbol (sid, args) ->
-          Format.fprintf ppf "(%a" Symbol.pp sid ;
-          List.iter (Format.fprintf ppf " %a" (pp false)) args ;
-          Format.pp_print_string ppf ")"
-    in
-    pp (not atomic) ppf t
-
-let setup_pp_inst lenv t =
-  let pp =
-    List.fold_left (fun acc (_, inst_args) -> inst_args @ acc) [] t
-    |> setup_pp_ttyp ~atomic:true lenv
-  in
-  fun ppf (inst_cls, inst_args) ->
-    TypeClass.pp ppf inst_cls ;
-    List.iter (Format.fprintf ppf " %a" pp) inst_args
-
-let rec pp_pat ppf p =
-  match p.pat with
-  | TPatWildcard ->
-      Format.pp_print_string ppf "_"
-  | TPatVar _ ->
-      Format.pp_print_string ppf "var"
-  | TPatConstant TUnit ->
-      Format.pp_print_string ppf "unit"
-  | TPatConstant (TBool f) ->
-      Format.pp_print_bool ppf f
-  | TPatConstant (TInt i) ->
-      Format.pp_print_int ppf i
-  | TPatConstant (TString s) ->
-      Format.pp_print_string ppf s
-  | TPatConstructor (cstr, args) ->
-      Format.fprintf ppf "(%a" Constructor.pp cstr ;
-      List.iter (Format.fprintf ppf " %a" pp_pat) args ;
-      Format.fprintf ppf ")"
-
-let rec pp_list pp ppf = function
-  | [] ->
-      ()
-  | hd :: tl ->
-      Format.fprintf ppf "%a, " pp hd ;
-      pp_list pp ppf tl
 
 let unknown_type_var n pos =
   let txt =
@@ -134,7 +37,7 @@ let variable_not_declared n pos =
   raise (TypeError (txt, Some pos.pos))
 
 let expected_type_in lenv found expected_list pos =
-  let pp = setup_pp_ttyp lenv (found :: expected_list) in
+  let pp = PP.setup_pp_ttyp lenv (found :: expected_list) in
   let rec _pp ppf = function
     | [] ->
         assert false
@@ -227,18 +130,16 @@ let function_arity_mismatch fid expected found pos =
 
 let unresolved_instance lenv inst stack pos =
   let pp = setup_pp_inst lenv (inst :: stack) in
-  let rec pp_l ppf = function
-    | [] ->
-        ()
-    | hd :: tl ->
-        Format.fprintf ppf "While solving requirement of %a.@." pp hd ;
-        pp_l ppf tl
-  in
   let txt =
     if stack <> [] then
       Format.asprintf
         "The instance '%a' cannot be resolved in the current environment.@.@.%a"
-        pp inst pp_l (List.rev stack)
+        pp inst
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf -> Format.pp_force_newline ppf)
+           (fun ppf ->
+             Format.fprintf ppf "While solving requirement of '%a'." pp ) )
+        (List.rev stack)
     else
       Format.asprintf
         "The instance '%a' cannot be resolved in the current environment." pp

@@ -1,4 +1,4 @@
-open TAst
+open TypedAst
 open Ast
 open DefaultTypingEnv
 open CommonTyping
