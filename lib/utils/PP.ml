@@ -247,10 +247,10 @@ let pp_tfun genv ppf (fid, exp) =
   fprintf ppf "fn %a::%a, %a" Function.pp fid pp_fun_typ fdecl Function.pp fid ;
   List.iter (fprintf ppf " %a" Variable.pp) exp.tfun_vars ;
   ( match exp.tfun_texpr with
-  | Either.Left e ->
+  | Some e ->
       fprintf ppf ":@.%a@." pp_texpr e
-  | Either.Right builtin ->
-      fprintf ppf ": %s@." builtin ) ;
+  | None ->
+      pp_print_newline ppf () ) ;
   pp_print_newline ppf ()
 
 let pp_tschema genv ppf schema_impl =
@@ -368,17 +368,17 @@ let pp_afun genv ppf aexp =
   in
   fprintf ppf "fn %a::%a" Function.pp aexp.afun_id pp_fun_typ fdecl ;
   ( match aexp.afun_body with
-  | Either.Left (body, l) ->
+  | Some (body, l) ->
       pp_print_newline ppf () ;
-      Label.Map.iter
+      LabelMap.iter
         (fun l aexprs ->
           fprintf ppf "%a:@.  @[%a@]@." Label.pp l
             (pp_print_list ~pp_sep:(fun ppf -> pp_force_newline ppf) pp_aexpr)
             aexprs )
         aexp.afun_annex ;
       fprintf ppf "%a@.  @[%a@]@." Label.pp l pp_aexpr body
-  | Either.Right builtin ->
-      fprintf ppf ": %s@." builtin ) ;
+  | None ->
+      pp_print_newline ppf () ) ;
   pp_print_newline ppf ()
 
 let pp_aschema genv ppf schema_impl =

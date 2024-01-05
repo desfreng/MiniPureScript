@@ -20,8 +20,8 @@ type binop =
   | Le
   | Plus
   | Minus
-  | Div
   | Mul
+  | Div
   | Concat
   | And
   | Or

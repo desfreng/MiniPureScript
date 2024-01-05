@@ -156,30 +156,14 @@ let is_effect_t t =
   | _ ->
       false
 
-let not_fimpl, mod_fimpl, log_fimpl, pure_fimpl, bool_show_fimpl, int_show_fimpl
-    =
-  let f x = "%" ^ x in
-  ( f not_fun_name
-  , f mod_fun_name
-  , f log_fun_name
-  , f pure_fun_name
-  , f ("bool_" ^ show_fun_name)
-  , f ("int_" ^ show_fun_name) )
-
 let default_fun_impl =
   List.fold_left
-    (fun acc (fid, ar, f_id) ->
+    (fun acc (fid, ar) ->
       Function.Map.add fid
-        { tfun_id= fid
-        ; tfun_arity= ar
-        ; tfun_vars= []
-        ; tfun_texpr= Either.Right f_id }
+        {tfun_id= fid; tfun_arity= ar; tfun_vars= []; tfun_texpr= None}
         acc )
     Function.Map.empty
-    [ (not_fid, 1, not_fimpl)
-    ; (mod_fid, 1, mod_fimpl)
-    ; (log_fid, 1, log_fimpl)
-    ; (pure_fid, 1, pure_fimpl) ]
+    [(not_fid, 1); (mod_fid, 1); (log_fid, 1); (pure_fid, 1)]
 
 let default_schema_impl =
   let default_schema_impl =
@@ -187,17 +171,12 @@ let default_schema_impl =
       { tschema_id= bool_show_sid
       ; tschema_funs=
           Function.Map.singleton show_fid
-            { tfun_id= show_fid
-            ; tfun_arity= 1
-            ; tfun_vars= []
-            ; tfun_texpr= Either.right bool_show_fimpl } }
+            {tfun_id= show_fid; tfun_arity= 1; tfun_vars= []; tfun_texpr= None}
+      }
   in
   Schema.Map.add int_show_sid
     { tschema_id= int_show_sid
     ; tschema_funs=
         Function.Map.singleton show_fid
-          { tfun_id= show_fid
-          ; tfun_arity= 1
-          ; tfun_vars= []
-          ; tfun_texpr= Either.right int_show_fimpl } }
+          {tfun_id= show_fid; tfun_arity= 1; tfun_vars= []; tfun_texpr= None} }
     default_schema_impl

@@ -204,6 +204,8 @@ let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
   let tfun_vars =
     List.init tfun_arity (fun i -> Variable.fresh ("in" ^ string_of_int i))
   in
+  (* All excessive bindings of the function args will be removed during the
+     allocation phase. *)
   let fargs =
     List.map2
       (fun typ varid -> make_expr (TVariable varid) typ)
@@ -212,7 +214,7 @@ let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
   let decl_list = List.map (fun (_, _, x) -> x) fun_body in
   (* And compile it to an expression *)
   let tfun_texpr =
-    Either.Left (compile_function genv ret_typ fargs mat_pat fun_id decl_list)
+    Some (compile_function genv ret_typ fargs mat_pat fun_id decl_list)
   in
   (* We build the fimpl structure *)
   {tfun_id= fun_id; tfun_vars; tfun_arity; tfun_texpr}

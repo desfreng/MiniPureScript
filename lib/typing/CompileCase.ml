@@ -262,7 +262,21 @@ let compile_case genv typ e pats actions pos =
       (fun acc p act -> Monoid.(acc <> of_elm ([p], act)))
       Monoid.empty pats actions
   in
-  try f genv typ {scrutineers= [e]; pat_rows= x}
+  try
+    (* We replace :
+       match ... with
+       | -> ...
+
+       by
+       let scrut_pat_var = ... in
+       match scrut_pat_var with
+       | -> ...
+
+       All excessive bindings will be removed during the allocation phase. *)
+    let v = Variable.fresh "scrut_pat_var" in
+    let scrut_expr = {expr= TVariable v; expr_typ= e.expr_typ} in
+    let case_expr = f genv typ {scrutineers= [scrut_expr]; pat_rows= x} in
+    {expr= TLet (v, e, case_expr); expr_typ= typ}
   with NonExhaustive -> TypingError.not_exhaustive_case pos
 
 (** [compile_function genv typ e pats actions] compiles the case statement over [e]

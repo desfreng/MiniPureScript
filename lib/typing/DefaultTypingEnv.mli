@@ -33,3 +33,5 @@ val mod_fid : TypedAst.Function.t
 val log_fid : TypedAst.Function.t
 
 val pure_fid : TypedAst.Function.t
+
+val show_fid : TypedAst.Function.t

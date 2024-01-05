@@ -1,4 +1,5 @@
 include Ids
+include Label
 
 (** Type of an expression. *)
 type ttyp =
@@ -168,8 +169,7 @@ and texpr_kind =
       * texpr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * texpr option (* The expression to evaluate if no constructor match *)
-  | TGetField of
-      texpr * int (* Retrieve one of the expression of a symbol constructor *)
+  | TGetField of texpr * int
 
 (** A typed pattern, they are not used in the TAst. *)
 type tpattern = {pat: tpat_kind; pat_typ: ttyp}
@@ -236,7 +236,7 @@ type tfun =
   { tfun_id: Function.t (* id of the function implemented *)
   ; tfun_vars: Variable.t list (* argument of the function, in order *)
   ; tfun_arity: int (* number of argument *)
-  ; tfun_texpr: (texpr, string) Either.t (* body of the function *) }
+  ; tfun_texpr: texpr option (* body of the function (None if builtins) *) }
 
 type tschema =
   { tschema_id: Schema.t (* id of the shema implemented *)

@@ -2,26 +2,28 @@ open AllocAst
 open DefaultTypingEnv
 open TypedAst
 
-type var_sub =
-  | Var of Variable.t
-  | Const of Constant.t
-  | FieldOf of var_sub * int
+let merge_map a b =
+  LabelMap.union
+    (fun _ a b ->
+      assert (a = b) ;
+      Some a )
+    a b
+
+let empty_map = LabelMap.empty
 
 type local_env =
-  { var_subst: (Variable.t, var_sub) Hashtbl.t
+  { var_subst: (Variable.t, (Variable.t, Constant.t) Either.t) Hashtbl.t
         (** Used to eliminate redondant access to memory. *)
   ; var_pos: avar Variable.map }
 
 let subst lenv v =
-  match Hashtbl.find_opt lenv.var_subst v with Some v -> v | None -> Var v
+  match Hashtbl.find_opt lenv.var_subst v with Some v -> v | None -> Left v
 
-let rec fv_loc = function
-  | Var v ->
+let fv_loc = function
+  | Either.Left v ->
       Variable.Set.singleton v
-  | Const _ ->
+  | Right _ ->
       Variable.Set.empty
-  | FieldOf (v, _) ->
-      fv_loc v
 
 let rec fv lenv e =
   match e.expr with
@@ -287,33 +289,31 @@ let mk_get_field e ae field =
   | _ ->
       {aexpr= AGetField (ae, field); aexpr_typ= e.expr_typ}
 
-let rec mk_var_pos e lenv = function
-  | Var var ->
+let mk_var_pos e lenv = function
+  | Either.Left var ->
       let var_pos = Variable.Map.find var lenv.var_pos in
       mk_var e var_pos
-  | Const c ->
+  | Right c ->
       mk_const e c
-  | FieldOf (var, f) ->
-      mk_get_field e (mk_var_pos e lenv var) f
 
 let rec allocate_expr fid lenv fp_pos e =
   match e.expr with
   | TConstant c ->
-      (mk_const e c, Label.Map.empty)
+      (mk_const e c, empty_map)
   | TVariable v ->
       (* We refer to an existing value, we do not make any closure here. *)
-      (mk_var_pos e lenv (subst lenv v), Label.Map.empty)
+      (mk_var_pos e lenv (subst lenv v), empty_map)
   | TNeg e ->
       (* The current expression is of type Int.
          No Effect possible -> no closure added. *)
       let ae, _ = allocate_expr fid lenv fp_pos e in
-      (mk_neg e ae, Label.Map.empty)
+      (mk_neg e ae, empty_map)
   | TBinOp (lhs, op, rhs) ->
       (* The current expression is of type Boolean, Int or String.
          No Effect possible -> no closure added. *)
       let alhs, _ = allocate_expr fid lenv fp_pos lhs in
       let arhs, _ = allocate_expr fid lenv fp_pos rhs in
-      (mk_binop e alhs op arhs, Label.Map.empty)
+      (mk_binop e alhs op arhs, empty_map)
   | TRegularFunApp (fid, instl, args) ->
       (* All closures introduced in the argument are required to be produced !
          We return them *)
@@ -321,8 +321,8 @@ let rec allocate_expr fid lenv fp_pos e =
         List.fold_left_map
           (fun acc arg ->
             let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (Label.merge_map acc lbl, ae) )
-          Label.Map.empty args
+            (merge_map acc lbl, ae) )
+          empty_map args
       in
       (mk_fun_call e fid instl aargs, lbl)
   | TTypeClassFunApp (inst, fid, args) ->
@@ -332,8 +332,8 @@ let rec allocate_expr fid lenv fp_pos e =
         List.fold_left_map
           (fun acc arg ->
             let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (Label.merge_map acc lbl, ae) )
-          Label.Map.empty args
+            (merge_map acc lbl, ae) )
+          empty_map args
       in
       (mk_type_class_call e inst fid aargs, lbl)
   | TConstructor (cstrn, args) ->
@@ -344,8 +344,8 @@ let rec allocate_expr fid lenv fp_pos e =
         List.fold_left_map
           (fun acc arg ->
             let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (Label.merge_map acc lbl, ae) )
-          Label.Map.empty args
+            (merge_map acc lbl, ae) )
+          empty_map args
       in
       (mk_constr e cstrn aargs, lbl)
   | TIf (cond, tb, fb) ->
@@ -354,7 +354,7 @@ let rec allocate_expr fid lenv fp_pos e =
       let acond, _ = allocate_expr fid lenv fp_pos cond in
       let atb, tb_lbl = allocate_expr fid lenv fp_pos tb in
       let afb, fb_lbl = allocate_expr fid lenv fp_pos fb in
-      (mk_if e acond atb afb, Label.merge_map tb_lbl fb_lbl)
+      (mk_if e acond atb afb, merge_map tb_lbl fb_lbl)
   | TBlock l -> (
     match l with
     | [x] ->
@@ -365,7 +365,7 @@ let rec allocate_expr fid lenv fp_pos e =
            substitution !). *)
         let fv_list = Variable.Set.elements (fv lenv l) in
         (* We create a fresh label for this do block *)
-        let label = Label.of_function fid "do" in
+        let label = function_lbl fid in
         (* We compute the position of each free variable occuring in this
            closure *)
         let vars =
@@ -396,10 +396,10 @@ let rec allocate_expr fid lenv fp_pos e =
           List.fold_left_map
             (fun acc arg ->
               let ae, lbl = allocate_expr fid closure_lenv initial_fp arg in
-              (Label.merge_map acc lbl, mk_do_effect arg ae) )
-            Label.Map.empty l
+              (merge_map acc lbl, mk_do_effect arg ae) )
+            empty_map l
         in
-        let lbl = Label.Map.add label block_expr lbl in
+        let lbl = LabelMap.add label block_expr lbl in
         (clos, lbl) )
   (* let v = x in y *)
   | TLet (v, x, y) -> (
@@ -415,7 +415,7 @@ let rec allocate_expr fid lenv fp_pos e =
         let v_pos, fp_pos = (ALocalVar fp_pos, fp_pos - word_size) in
         let lenv = {lenv with var_pos= Variable.Map.add v v_pos lenv.var_pos} in
         let ay, y_lbl = allocate_expr fid lenv fp_pos y in
-        (mk_let e v_pos ax ay, Label.merge_map x_lbl y_lbl)
+        (mk_let e v_pos ax ay, merge_map x_lbl y_lbl)
       in
       match x.expr with
       | TVariable v' ->
@@ -427,19 +427,8 @@ let rec allocate_expr fid lenv fp_pos e =
       | TConstant c ->
           (* we have a let v = c in y with v a variable et c a constant !
              So we substitute v with c in x. *)
-          Hashtbl.add lenv.var_subst v (Const c) ;
+          Hashtbl.add lenv.var_subst v (Either.Right c) ;
           allocate_expr fid lenv fp_pos y
-      | TGetField (expr, f) -> (
-        match expr.expr with
-        | TVariable x ->
-            Format.eprintf "%a@." Variable.pp x ;
-            (* we have a let v = GetField(x, i) in ... with v and x variables !
-               So we substitute v with GetField(σ(x), i) in x. *)
-            let x_pos = subst lenv x in
-            Hashtbl.add lenv.var_subst v (FieldOf (x_pos, f)) ;
-            allocate_expr fid lenv fp_pos y
-        | _ ->
-            default_let () )
       | _ ->
           default_let () )
   | TConstantCase (pat, branchs, other) ->
@@ -451,15 +440,15 @@ let rec allocate_expr fid lenv fp_pos e =
         Constant.Map.fold
           (fun cst branch (nmap, lbls) ->
             let ae, lbl = allocate_expr fid lenv fp_pos branch in
-            (Constant.Map.add cst ae nmap, Label.merge_map lbls lbl) )
+            (Constant.Map.add cst ae nmap, merge_map lbls lbl) )
           branchs
-          (Constant.Map.empty, Label.Map.empty)
+          (Constant.Map.empty, empty_map)
       in
       let aother, lbl =
         match other with
         | Some o ->
             let ae, lbl = allocate_expr fid lenv fp_pos o in
-            (Some ae, Label.merge_map lbls lbl)
+            (Some ae, merge_map lbls lbl)
         | None ->
             (None, lbls)
       in
@@ -474,15 +463,15 @@ let rec allocate_expr fid lenv fp_pos e =
           (fun cst branch (nmap, lbls) ->
             Format.eprintf "@.%a@." Constructor.pp cst ;
             let ae, lbl = allocate_expr fid lenv fp_pos branch in
-            (Constructor.Map.add cst ae nmap, Label.merge_map lbls lbl) )
+            (Constructor.Map.add cst ae nmap, merge_map lbls lbl) )
           branchs
-          (Constructor.Map.empty, Label.Map.empty)
+          (Constructor.Map.empty, empty_map)
       in
       let aother, lbl =
         match other with
         | Some o ->
             let ae, lbl = allocate_expr fid lenv fp_pos o in
-            (Some ae, Label.merge_map lbls lbl)
+            (Some ae, merge_map lbls lbl)
         | None ->
             (None, lbls)
       in
@@ -490,7 +479,7 @@ let rec allocate_expr fid lenv fp_pos e =
   | TGetField (e, f) ->
       (* We refer to an existing value, we do not make any closure here. *)
       let ae, _ = allocate_expr fid lenv fp_pos e in
-      (mk_get_field e ae f, Label.Map.empty)
+      (mk_get_field e ae f, empty_map)
 
 let allocate_fun genv tfun =
   (* This function is compiled as a closure if its return type is Effect a. *)
@@ -509,7 +498,7 @@ let allocate_fun genv tfun =
     is_effect_t ret_t
   in
   match tfun.tfun_texpr with
-  | Either.Left fun_expr ->
+  | Some fun_expr ->
       let _, var_pos =
         if is_closure_fun then
           List.fold_left
@@ -527,16 +516,16 @@ let allocate_fun genv tfun =
       in
       let lenv = {var_subst= Hashtbl.create 17; var_pos} in
       let ae, lbls = allocate_expr tfun.tfun_id lenv initial_fp fun_expr in
-      let fun_label = Label.of_function tfun.tfun_id "" in
+      let fun_label = function_lbl tfun.tfun_id in
       { afun_id= tfun.tfun_id
       ; afun_arity= tfun.tfun_arity
-      ; afun_body= Left (ae, fun_label)
+      ; afun_body= Some (ae, fun_label)
       ; afun_annex= lbls }
-  | Either.Right fun_impl_id ->
+  | None ->
       { afun_id= tfun.tfun_id
       ; afun_arity= tfun.tfun_arity
-      ; afun_body= Right fun_impl_id
-      ; afun_annex= Label.Map.empty }
+      ; afun_body= None
+      ; afun_annex= empty_map }
 
 let allocate_schema genv tshema =
   let aschema_funs = Function.Map.map (allocate_fun genv) tshema.tschema_funs in
@@ -545,4 +534,12 @@ let allocate_schema genv tshema =
 let allocate_tprogram p =
   let afuns = Function.Map.map (allocate_fun p.genv) p.tfuns in
   let aschemas = Schema.Map.map (allocate_schema p.genv) p.tschemas in
-  {afuns; aschemas; main_id= p.main_id; genv= p.genv}
+  let main_lbl =
+    let maindecl = Function.Map.find p.main_id afuns in
+    match maindecl.afun_body with
+    | Some (_, label) ->
+        label
+    | None ->
+        assert false
+  in
+  {afuns; aschemas; main= (p.main_id, main_lbl); genv= p.genv}

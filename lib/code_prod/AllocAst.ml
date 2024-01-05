@@ -1,61 +1,5 @@
+include Label
 open TypedAst
-
-module type Label = sig
-  type t
-
-  val of_function : Function.t -> string -> t
-
-  module Map : Map.S with type key = t
-
-  module Set : Set.S with type elt = t
-
-  type 'a map = 'a Map.t
-
-  type set = Set.t
-
-  val merge_map : 'a map -> 'a map -> 'a map
-
-  val pp : Format.formatter -> t -> unit
-end
-
-module Label : Label = struct
-  type t = string
-
-  let existing_lbl = Hashtbl.create 17
-
-  let of_function fid l =
-    let x = Function.name fid in
-    let x = if l <> "" then x ^ "_" ^ l else x in
-    let l =
-      if Hashtbl.mem existing_lbl x then (
-        let cpt = ref 1 in
-        let l = ref (x ^ "_" ^ string_of_int !cpt) in
-        while Hashtbl.mem existing_lbl !l do
-          incr cpt ;
-          l := x ^ "_" ^ string_of_int !cpt
-        done ;
-        !l )
-      else x
-    in
-    Hashtbl.add existing_lbl l () ;
-    l
-
-  module Map = Map.Make (String)
-  module Set = Set.Make (String)
-
-  type 'a map = 'a Map.t
-
-  type set = Set.t
-
-  let merge_map a b =
-    Map.union
-      (fun _ a b ->
-        assert (a = b) ;
-        Some a )
-      a b
-
-  let pp = Format.pp_print_string
-end
 
 type avar =
   | ALocalVar of int (* A local variable *)
@@ -83,7 +27,7 @@ and aexpr_kind =
   | AInstanceClosure of resolved_inst * Function.t * aexpr list
   | AConstructor of Constructor.t * aexpr list (* Constructor application *)
   | AIf of aexpr * aexpr * aexpr
-  | ALocalClosure of Label.t * avar list
+  | ALocalClosure of label * avar list
   | ADoEffect of aexpr
   | ALet of avar * aexpr * aexpr
   | AConstantCase of
@@ -106,9 +50,9 @@ type afun =
 
         (* ; fun_impl_vars: Variable.t list (* argument of the function, in order *) *)
   ; afun_arity: int (* number of argument *)
-  ; afun_body: (aexpr * Label.t, string) Either.t
-        (* body of the function with its label *)
-  ; afun_annex: aexpr list Label.map }
+  ; afun_body: (aexpr * label) option
+        (* body of the function with its label, None if builtins *)
+  ; afun_annex: aexpr list LabelMap.t }
 
 type aschema =
   { aschema_id: Schema.t (* id of the shema implemented *)
@@ -121,7 +65,8 @@ type aprogram =
         (* maps each "normal" function definition to its implementation *)
   ; aschemas: aschema Schema.map (* maps each schema to its implementation *)
   ; genv: global_env (* The resulting typing environment. *)
-  ; main_id: Function.t (* id of the program entry point *) }
+  ; main:
+      Function.t * label (* id of the program entry point with it's label. *) }
 
 let word_size = 8
 
