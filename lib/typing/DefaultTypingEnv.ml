@@ -26,19 +26,19 @@ let effect_t t = TSymbol (effect_sid, [t])
 let not_fun_name, mod_fun_name, log_fun_name, pure_fun_name, show_fun_name =
   ("not", "mod", "log", "pure", "show")
 
-(* The builtin functions *)
-let not_fid, mod_fid, log_fid, pure_fid, show_fid =
-  ( Function.fresh not_fun_name
-  , Function.fresh mod_fun_name
-  , Function.fresh log_fun_name
-  , Function.fresh pure_fun_name
-  , Function.fresh show_fun_name )
-
 let show_class_name = "Show"
 
 let show_tid = TypeClass.fresh show_class_name
 
 let bool_show_sid, int_show_sid = (Schema.fresh show_tid, Schema.fresh show_tid)
+
+(* The builtin functions *)
+let not_fid, mod_fid, log_fid, pure_fid, show_fid =
+  ( Function.fresh not_fun_name None
+  , Function.fresh mod_fun_name None
+  , Function.fresh log_fun_name None
+  , Function.fresh pure_fun_name None
+  , Function.fresh show_fun_name (Some show_tid) )
 
 (** A default global environment with:
     - builtin types: Unit, Boolean, Int, String, and Effect a
@@ -100,7 +100,10 @@ let default_genv =
          { tclass_arity= 1
          ; tclass_tvars= [v]
          ; tclass_decls=
-             SMap.singleton show_fun_name ([TQuantifiedVar v], 1, string_t) } )
+             Function.Map.singleton show_fid
+               { tc_fun_args= [TQuantifiedVar v]
+               ; tc_fun_arity= 1
+               ; tc_fun_ret= string_t } } )
   ; schemas=
       TypeClass.Map.singleton show_tid
         [ { schema_id= int_show_sid

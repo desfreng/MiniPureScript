@@ -203,11 +203,16 @@ type funct =
 module SMap = Map.Make (String)
 module SSet = Set.Make (String)
 
+type tclass_function =
+  { tc_fun_args: ttyp list  (** Expected type of the arguments *)
+  ; tc_fun_arity: int  (** Number of argument of the function *)
+  ; tc_fun_ret: ttyp  (** Return type of the function *) }
+
 type tclass =
   { tclass_arity: int  (** Number of type argument of the class *)
   ; tclass_tvars: QTypeVar.t list
         (** type variables used in the class, in order *)
-  ; tclass_decls: (ttyp list * int * ttyp) SMap.t
+  ; tclass_decls: tclass_function Function.map
         (** Functions defined in the class *) }
 
 type local_env =

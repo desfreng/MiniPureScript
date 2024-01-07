@@ -47,7 +47,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
     | None -> (
       match Function.exists "unit" with
       | Some fid ->
-          type_fun_call genv lenv ("unit", fid, []) expr
+          type_fun_call genv lenv (fid, []) expr
       | None ->
           return (TConstant TUnit) unit_t ) )
   | ExprVar v -> (
@@ -57,7 +57,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
     | None -> (
       match Function.exists v with
       | Some fid ->
-          type_fun_call genv lenv (v, fid, []) expr
+          type_fun_call genv lenv (fid, []) expr
       | None ->
           TypingError.variable_not_declared v expr ) )
   | WithType (e, t) ->
@@ -227,7 +227,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
   | AppFun (fn, args) -> (
     match Function.exists fn with
     | Some fid ->
-        type_fun_call genv lenv (fn, fid, args) expr
+        type_fun_call genv lenv (fid, args) expr
     | None ->
         TypingError.unknown_function fn expr )
   | Case (e, p) ->
@@ -307,7 +307,7 @@ and check_fun_call genv lenv (fid, args) (tvars, dargs, darity, dret) expr =
     let res_typ = unfold (subst sigma dret) in
     (sigma, args_exprs, res_typ, args_i2r)
 
-and type_fun_call genv lenv (fn, fid, args) expr =
+and type_fun_call genv lenv (fid, args) expr =
   match Function.Map.find fid genv.funs with
   | Either.Left decl ->
       (* A regular function is called *)
@@ -330,10 +330,13 @@ and type_fun_call genv lenv (fn, fid, args) expr =
           decl.fun_insts
       in
       (TRegularFunApp (fid, arg_insts, args_exprs), res_typ, args_i2r)
-  | Either.Right inst_class ->
+  | Either.Right cid ->
       (* A function defined in a type class is called. *)
-      let decl = TypeClass.Map.find inst_class genv.tclass in
-      let fun_args, fun_arity, fun_ret = SMap.find fn decl.tclass_decls in
+      let decl = TypeClass.Map.find cid genv.tclass in
+      let fun_args, fun_arity, fun_ret =
+        let tc_fdecl = Function.Map.find fid decl.tclass_decls in
+        (tc_fdecl.tc_fun_args, tc_fdecl.tc_fun_arity, tc_fdecl.tc_fun_ret)
+      in
       let fun_tvars = QTypeVar.Set.of_list decl.tclass_tvars in
       let fun_decl = (fun_tvars, fun_args, fun_arity, fun_ret) in
       (* We compute the expression of each argument, the return type and all
@@ -348,7 +351,7 @@ and type_fun_call genv lenv (fn, fid, args) expr =
         List.map (fun qvar -> Hashtbl.find sigma qvar) decl.tclass_tvars
       in
       (* This is the instance in which this function is defineds. *)
-      let fun_inst = resolve genv lenv (inst_class, inst_args) expr in
+      let fun_inst = resolve genv lenv (cid, inst_args) expr in
       ( TTypeClassFunApp (fun_inst, fid, args_exprs)
       , res_typ
       , Monoid.(args_i2r <> of_elm fun_inst) )

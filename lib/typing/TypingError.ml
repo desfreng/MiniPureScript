@@ -340,17 +340,19 @@ let function_not_in_class fname clsid pos =
 
 let missing_functions lenv inst fdone clsid class_decl pos =
   let miss_fun =
-    SMap.filter (fun name _ -> SSet.mem name fdone) class_decl.tclass_decls
+    Function.Map.filter
+      (fun fid _ -> Function.Set.mem fid fdone)
+      class_decl.tclass_decls
   in
   let rec _pp ppf = function
     | [] ->
         assert false
     | [x] ->
-        Format.pp_print_string ppf x
+        Function.pp ppf x
     | [x; y] ->
-        Format.fprintf ppf "%s and %s" x y
+        Format.fprintf ppf "%a and %a" Function.pp x Function.pp y
     | hd :: tl ->
-        Format.fprintf ppf "%s, %a" hd _pp tl
+        Format.fprintf ppf "%a, %a" Function.pp hd _pp tl
   in
   let pp = setup_pp_inst lenv [inst] in
   let txt =
@@ -358,7 +360,7 @@ let missing_functions lenv inst fdone clsid class_decl pos =
       "The '%a' instance is missing the implementation of the functions %a \
        declared in the '%a' type class."
       pp inst _pp
-      (SMap.bindings miss_fun |> List.map fst)
+      (Function.Map.bindings miss_fun |> List.map fst)
       TypeClass.pp clsid
   in
   raise (TypeError (txt, Some pos.pos))

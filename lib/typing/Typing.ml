@@ -322,9 +322,9 @@ let check_class genv class_name var_types fun_decls pos =
          be used to check functions declarations. *)
       let lenv = {default_lenv with tvars= tvarsmap} in
       (* For each function of in the [fun_decls] list *)
-      let genv, tclass_decls =
+      let genv, tclass_decls, _ =
         List.fold_left
-          (fun (genv, fdecls) f_decl ->
+          (fun (genv, fdecls, fun_name_set) f_decl ->
             match f_decl.v with
             | TypeDecl (fname, qvars, instl, args, ret) -> (
               match Function.exists fname with
@@ -332,7 +332,7 @@ let check_class genv class_name var_types fun_decls pos =
                   TypingError.function_already_exists fname pos
               | None ->
                   (* We check that it's well formed *)
-                  if SMap.mem fname fdecls then
+                  if SSet.mem fname fun_name_set then
                     TypingError.same_fun_in_class fname class_name pos
                   else if qvars <> [] then
                     TypingError.no_qvar_in_class_fun_decl fname class_name
@@ -343,22 +343,25 @@ let check_class genv class_name var_types fun_decls pos =
                   else
                     (* [check_type_decl] returns the fun_decl of the function without
                        the fields of the instances and the types variables. *)
-                    let fun_args, fun_arity, fun_ret =
+                    let tc_fun_args, tc_fun_arity, tc_fun_ret =
                       check_type_decl genv lenv args ret
                     in
-                    let fun_id = Function.fresh fname in
+                    let fun_id = Function.fresh fname (Some cid) in
+                    let tc_fdecl = {tc_fun_args; tc_fun_arity; tc_fun_ret} in
                     let genv =
                       { genv with
                         funs=
                           Function.Map.add fun_id (Either.Right cid) genv.funs
                       }
                     in
-                    (genv, SMap.add fname (fun_args, fun_arity, fun_ret) fdecls)
-              )
+                    let fdecls = Function.Map.add fun_id tc_fdecl fdecls in
+                    let fun_name_set = SSet.add fname fun_name_set in
+                    (genv, fdecls, fun_name_set) )
             | _ ->
                 (* We cannot have anything else than a TypeDecl thanks to the parser. *)
                 assert false )
-          (genv, SMap.empty) fun_decls
+          (genv, Function.Map.empty, SSet.empty)
+          fun_decls
       in
       let cls_decl = {tclass_arity; tclass_decls; tclass_tvars} in
       (* And add it the the environment *)
@@ -470,30 +473,41 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
                branch. *)
             assert false
       in
-      if SSet.mem fname fdone then
-        TypingError.function_already_def_in_inst lenv fname prod_inst decl
+      let fid =
+        match Function.exists fname with
+        | Some fid ->
+            fid
+        | None ->
+            TypingError.function_not_in_class fname prod_class decl
+      in
+      if Function.Set.mem fid fdone then TypingError.unknown_function fname decl
       else
-        match SMap.find_opt fname class_decl.tclass_decls with
-        | Some (args_t, arity, ret_t) ->
-            let ret_typ = subst sigma ret_t in
-            let args_typ = List.map (subst sigma) args_t in
+        match Function.Map.find_opt fid class_decl.tclass_decls with
+        | Some tc_fdecl ->
+            let ret_typ = subst sigma tc_fdecl.tc_fun_ret in
+            let args_typ = List.map (subst sigma) tc_fdecl.tc_fun_args in
             (* This is safe because during the building of [class_decl] each
                functions is declared. *)
             let fun_id = Option.get (Function.exists fname) in
             let fimpl =
               check_fun_equations genv lenv
-                (fun_id, arity, ret_typ, args_typ)
+                (fun_id, tc_fdecl.tc_fun_arity, ret_typ, args_typ)
                 fun_body permissive
             in
             let fun_impls = Function.Map.add fimpl.tfun_id fimpl fun_impls in
-            let fdone = SSet.add fname fdone in
+            let fdone = Function.Set.add fid fdone in
             loop fun_impls fdone next_decls
         | None ->
             TypingError.function_not_in_class fname prod_class decl
   in
-  let tschema_funs, fdone = loop Function.Map.empty SSet.empty fun_decls in
-  if SMap.for_all (fun x _ -> SSet.mem x fdone) class_decl.tclass_decls then
-    (genv, {tschema_id= sid; tschema_funs})
+  let tschema_funs, fdone =
+    loop Function.Map.empty Function.Set.empty fun_decls
+  in
+  if
+    Function.Map.for_all
+      (fun fid _ -> Function.Set.mem fid fdone)
+      class_decl.tclass_decls
+  then (genv, {tschema_id= sid; tschema_funs})
   else
     TypingError.missing_functions lenv prod_inst fdone prod_class class_decl
       decl
@@ -551,7 +565,7 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
         let fun_insts =
           List.map (fun coid -> check_wf_instance genv lenv coid) instl
         in
-        let fid = Function.fresh fun_name in
+        let fid = Function.fresh fun_name None in
         (* We build the function declaration structure *)
         let fdecl =
           let fun_args, fun_arity, fun_ret =

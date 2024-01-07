@@ -95,30 +95,8 @@ module Constructor : sig
   (** [exists n] checks if a constructor with name [n] exists. If so, return
       it with its symbol.*)
 
-  val pp : Format.formatter -> t -> unit
-  (** Used to display a symbol *)
-
-  module Map : Map.S with type key = t
-
-  module Set : Set.S with type elt = t
-
-  type 'a map = 'a Map.t
-
-  type set = Set.t
-end
-
-(** Id of a function *)
-module Function : sig
-  type t
-
-  val fresh : string -> t
-  (** [fresh n] creates a new function with name [n]. *)
-
-  val exists : string -> t option
-  (** [exists n] checks if a symbol with name [n] exists. If so, return it.*)
-
-  val name : t -> string
-  (** [name t] returns the name bind to [t]. *)
+  val index_in_symbol : t -> int
+  (** [index_in_symbol t] returns the index of this constructor in its symbol. *)
 
   val pp : Format.formatter -> t -> unit
   (** Used to display a symbol *)
@@ -144,6 +122,37 @@ module TypeClass : sig
 
   val exists : string -> t option
   (** [exists n] checks if a symbol with name [n] exists. If so, return it.*)
+
+  val pp : Format.formatter -> t -> unit
+  (** Used to display a symbol *)
+
+  module Map : Map.S with type key = t
+
+  module Set : Set.S with type elt = t
+
+  type 'a map = 'a Map.t
+
+  type set = Set.t
+end
+
+(** Id of a function *)
+module Function : sig
+  type t
+
+  val fresh : string -> TypeClass.t option -> t
+  (** [fresh n] creates a new function with name [n]. *)
+
+  val exists : string -> t option
+  (** [exists n] checks if a symbol with name [n] exists. If so, return it.*)
+
+  val name : t -> string
+  (** [name t] returns the name bind to [t]. *)
+
+  val type_class : t -> TypeClass.t option
+  (** [type_class t] returns the potential type class associed to this function. *)
+
+  val index_in_class : t -> int option
+  (** [index_in_class t] returns the index of this function in its potential class. *)
 
   val pp : Format.formatter -> t -> unit
   (** Used to display a symbol *)

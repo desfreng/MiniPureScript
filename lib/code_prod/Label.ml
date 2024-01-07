@@ -29,3 +29,5 @@ let string_lbl () = fresh_lbl ~atomic:false "string"
 let code_lbl () = fresh_lbl ~atomic:false "L"
 
 let pp = Format.pp_print_string
+
+let with_prefix s = fresh_lbl ~atomic:true s

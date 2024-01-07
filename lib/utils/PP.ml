@@ -239,10 +239,8 @@ let pp_tfun genv ppf (fid, exp) =
         (fdecl.fun_insts, fdecl.fun_args, fdecl.fun_ret)
     | Right tid ->
         let tdecl = TypeClass.Map.find tid genv.tclass in
-        let fun_args, _, fun_ret =
-          SMap.find (Function.name fid) tdecl.tclass_decls
-        in
-        ([], fun_args, fun_ret)
+        let tc_fdecl = Function.Map.find fid tdecl.tclass_decls in
+        ([], tc_fdecl.tc_fun_args, tc_fdecl.tc_fun_ret)
   in
   fprintf ppf "fn %a::%a, %a" Function.pp fid pp_fun_typ fdecl Function.pp fid ;
   List.iter (fprintf ppf " %a" Variable.pp) exp.tfun_vars ;
@@ -361,10 +359,8 @@ let pp_afun genv ppf aexp =
         (fdecl.fun_insts, fdecl.fun_args, fdecl.fun_ret)
     | Right tid ->
         let tdecl = TypeClass.Map.find tid genv.tclass in
-        let fun_args, _, fun_ret =
-          SMap.find (Function.name aexp.afun_id) tdecl.tclass_decls
-        in
-        ([], fun_args, fun_ret)
+        let tc_fdecl = Function.Map.find aexp.afun_id tdecl.tclass_decls in
+        ([], tc_fdecl.tc_fun_args, tc_fdecl.tc_fun_ret)
   in
   fprintf ppf "fn %a::%a" Function.pp aexp.afun_id pp_fun_typ fdecl ;
   ( match aexp.afun_body with

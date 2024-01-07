@@ -11,3 +11,5 @@ val function_lbl : Ids.Function.t -> label
 val string_lbl : unit -> label
 
 val code_lbl : unit -> label
+
+val with_prefix : string -> label
