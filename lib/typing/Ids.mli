@@ -166,8 +166,27 @@ module Function : sig
   type set = Set.t
 end
 
-(** Id of a schema *)
+(** Id of a global schema (or instance if this schema has no dependencies) *)
 module Schema : sig
+  type t
+
+  val fresh : TypeClass.t -> t
+
+  val typeclass : t -> TypeClass.t
+
+  val pp : Format.formatter -> t -> unit
+
+  module Map : Map.S with type key = t
+
+  module Set : Set.S with type elt = t
+
+  type 'a map = 'a Map.t
+
+  type set = Set.t
+end
+
+(** Id of a local type-class instance *)
+module Instance : sig
   type t
 
   val fresh : TypeClass.t -> t

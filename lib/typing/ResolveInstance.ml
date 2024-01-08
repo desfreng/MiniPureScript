@@ -4,7 +4,7 @@ exception
   UnresolvedInstance of
     (TypeClass.t * ttyp list) * (TypeClass.t * ttyp list) list
 
-exception Resolved of res_inst_kind
+exception Resolved of resolved_instance
 
 (** Remove non quantified variable with quantified one that are not in the
     local environment *)
@@ -35,9 +35,9 @@ let resolve_local_inst lenv (to_res_cls, to_res_args) =
        environment. *)
     try
       List.iter
-        (fun (inst_arg_id, _, inst_args) ->
+        (fun (inst_id, inst_args) ->
           if List.for_all2 can_unify (List.map copy to_res_args) inst_args then
-            raise (Resolved (ArgumentInstance inst_arg_id)) )
+            raise (Resolved (TLocalInstance inst_id)) )
         l ;
       None
     with Resolved r -> Some r )
@@ -64,7 +64,7 @@ let rec resolve_global_inst genv lenv (to_res_cls, to_res_args) =
           if List.for_all2 can_unify typ_list_bis prod_args then
             if sdecl.schema_req = [] then
               (* This is a global instance *)
-              raise (Resolved (GlobalInstance sdecl.schema_id))
+              raise (Resolved (TGlobalInstance sdecl.schema_id))
             else
               let req_inst =
                 List.map
@@ -75,7 +75,7 @@ let rec resolve_global_inst genv lenv (to_res_cls, to_res_args) =
               try
                 (* we try to resolve the required instances *)
                 let args = List.map (resolve_inst genv lenv) req_inst in
-                raise (Resolved (GlobalSchema (sdecl.schema_id, args)))
+                raise (Resolved (TGlobalSchema (sdecl.schema_id, args)))
               with UnresolvedInstance (i, acc) ->
                 raise (UnresolvedInstance (i, (prod_class, prod_args) :: acc))
           )

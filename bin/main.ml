@@ -62,9 +62,11 @@ let () =
       if !parse_only then exit 0
       else
         let tprog = Typing.check_program !permissive_decl prog in
+        (* PP.pp_tprog Format.std_formatter tprog ; *)
         if !type_only then exit 0
         else
           let sprog = Simplify.simplify_program tprog in
+          (* PP.pp_sprog Format.std_formatter sprog ; *)
           let aprog = Allocation.allocate_tprogram 8 sprog in
           PP.pp_aprog Format.std_formatter aprog
     with

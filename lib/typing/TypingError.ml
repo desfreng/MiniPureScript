@@ -40,6 +40,7 @@ let expected_type_in lenv found expected_list pos =
   let pp = PP.setup_pp_ttyp lenv (found :: expected_list) in
   let rec _pp ppf = function
     | [] ->
+        (* The type list cannot be empty. *)
         assert false
     | [x] ->
         pp ppf x
@@ -346,6 +347,7 @@ let missing_functions lenv inst fdone clsid class_decl pos =
   in
   let rec _pp ppf = function
     | [] ->
+        (* The type list cannot be empty. *)
         assert false
     | [x] ->
         Function.pp ppf x

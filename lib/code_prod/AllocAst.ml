@@ -1,18 +1,46 @@
 include Label
 include SympAst
 
-type var_position =
-  | ALocalVar of int (* A local variable *)
-  | AClosVar of int (* Variable in a closure *)
+(* The position of a variable. *)
+type var_pos =
+  | AStackVar of
+      int (* A local variable (ie. in the stack, passed as an argument) *)
+  | AClosVar of int
+(* Variable in a closure (ie. in the heap, reachable by the
+   %rdi pointer) *)
 
-type direct_value = FromMemory of var_position | FromConstant of Constant.t
+(* The position of an instance. *)
+type inst_pos =
+  | AStackInst of int
+    (* A local variable (ie. in the stack, passed as an instance)
+       ALocalInst i ~= i(%rbp) *)
+  | AClosInst of int
+  (* Instance in a closure (ie. in the heap, reachable by the
+     %rdi pointer)
+     AClosInst i ~= i(%rdi) *)
+  | AInstInst of (int * int)
+(* Instance in an instance (ie. this is an instance required in a schema,
+   so it is added at the end of it.)
+   AInstInst (i, j) ~= j(i(%rbp)) because i(%rbp) is a pointer to a bloc of
+   memory with :
+     - At the beginning, pointers to the code of each function in the instance.
+     - At the end, pointers to the required instances
+*)
 
-(** Expression type, with every type possible. *)
+(* A value already computed at runtime or known at compile time. *)
+type direct_value = FromMemory of var_pos | FromConstant of Constant.t
+
+(*  *)
+type alloc_inst =
+  | ALocalInst of inst_pos
+  | AGlobalInst of Schema.t
+  | AGlobalSchema of (Schema.t * alloc_inst list)
+
 type alloc_expr = {alloc_expr: alloc_expr_kind; alloc_expr_typ: ttyp}
 
 and alloc_expr_kind =
   | AConstant of Constant.t (* A constant *)
-  | AVariable of var_position (* A variable *)
+  | AVariable of var_pos (* A variable *)
   | ANeg of alloc_expr (* The opposite of an expression *)
   | ANot of alloc_expr (* The boolean negation of an expression *)
   | AArithOp of alloc_expr * arith_op * alloc_expr (* An arithmetic operation *)
@@ -23,35 +51,34 @@ and alloc_expr_kind =
   | (* "Regular" Function application *)
     AFunctionCall of
       Function.t (* the function id *)
-      * resolved_inst list (* the list of instances needed *)
+      * alloc_inst list (* the list of instances needed *)
       * direct_value list (* the list of argument *)
   | (* Type-Class Function application *)
     AInstanceCall of
-      resolved_inst (* the instance in which the function called is defined *)
+      alloc_inst (* the instance in which the function called is defined *)
       * Function.t (* the function id *)
       * direct_value list (* the list of argument *)
   | AConstructor of
       Constructor.t * direct_value list (* Constructor application *)
   | AIf of alloc_expr * alloc_expr * alloc_expr (* A conditional branchment *)
-  | ALocalClosure of label * var_position list
+  | ALocalClosure of label * inst_pos list * var_pos list * int
   | ADoEffect of alloc_expr
-  | ALet of
-      var_position * alloc_expr * alloc_expr (* Definition of a variable *)
+  | ALet of int * alloc_expr * alloc_expr (* Definition of a variable *)
   | ACompareAndBranch of
-      { lhs: var_position
+      { lhs: var_pos
             (** The variable refering to value filtered by the constants *)
       ; rhs: Constant.t  (** The constant we compare the expression *)
       ; lower: alloc_expr  (** if expr < const, we execute this branch *)
       ; equal: alloc_expr  (** if expr = const, we execute this branch *)
       ; greater: alloc_expr  (** if expr > const, we execute this branch *) }
   | AContructorCase of
-      var_position
+      var_pos
       * ttyp (* The variable refering to value filtered by the constructors *)
       * alloc_expr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * alloc_expr option
     (* The expression to evaluate if no constructor match *)
-  | AGetField of var_position * ttyp * int
+  | AGetField of var_pos * int
 (* Retrieve one of the expression of a symbol constructor *)
 
 type local_afun_part =

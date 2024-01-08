@@ -34,7 +34,7 @@ let get_fields genv (var, var_typ) cst_id =
         let cst_args = List.map (subst sigma) constr_args in
         (* For each field, we create the expression that retrieve its value. *)
         ( List.mapi
-            (fun index t -> {expr= TGetField (var, var_typ, index); expr_typ= t})
+            (fun index t -> {expr= TGetField (var, index); expr_typ= t})
             cst_args
         , cst_args )
 
@@ -76,6 +76,7 @@ let constructor_mat genv m pat_cstr =
       (fun acc pat_row ->
         match pat_row with
         | [], _ ->
+            (* [pat_row] cannot be empty here, this is assured by [f] *)
             assert false
         | pat :: pat_row, act -> (
           match (pat.pat, pat_cstr) with
@@ -175,7 +176,9 @@ let constructors_of_symbol genv typ =
       let sdecl = Symbol.Map.find sid genv.symbols in
       sdecl.symbol_constr
   | _ ->
-      assert false
+      raise
+        (Invalid_argument
+           "[constructors_of_symbol] must only be called on a symbol." )
 
 let build_other_submat genv m =
   (* We compute the sub-matrix for the other cases. To do this, we use a
@@ -197,7 +200,14 @@ let rec f genv typ m =
         (* All expression must be closed wit hthis handler. It introduces a fresh
            variable if the pattern is not an expression. *)
         let v, v_typ, m, close =
-          let e, tl = match l with e :: tl -> (e, tl) | _ -> assert false in
+          let e, tl =
+            match l with
+            | e :: tl ->
+                (e, tl)
+            | _ ->
+                (* Guarded by the first case. *)
+                assert false
+          in
           match e.expr with
           | TVariable v ->
               (v, e.expr_typ, m, Fun.id)
@@ -273,6 +283,7 @@ let rec f genv typ m =
                       | Int i ->
                           IMap.add i branch acc
                       | _ ->
+                          (* [branch_expr] is uniformly typed. *)
                           assert false )
                     branch_expr IMap.empty
                 in
@@ -287,6 +298,7 @@ let rec f genv typ m =
                       | String s ->
                           SMap.add s branch acc
                       | _ ->
+                          (* [branch_expr] is uniformly typed. *)
                           assert false )
                     branch_expr SMap.empty
                 in

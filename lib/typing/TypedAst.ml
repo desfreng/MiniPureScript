@@ -120,15 +120,13 @@ module Constant : Constant = struct
   type 'a map = 'a Map.t
 end
 
-type res_inst_kind =
-  | (* This refers to the [i]th instance given as argument of the function. *)
-    ArgumentInstance of int
+type resolved_instance =
+  | (* This refers to an instance given as argument of the function. *)
+    TLocalInstance of Instance.t
   | (* This refers an instance defined in the global environment. *)
-    GlobalInstance of Schema.t
+    TGlobalInstance of Schema.t
   | (* This refers a schema instancied with the following instance arguments. *)
-    GlobalSchema of (Schema.t * res_inst_kind list)
-
-type resolved_inst = res_inst_kind Lazy.t
+    TGlobalSchema of (Schema.t * resolved_instance list)
 
 module SMap = Map.Make (String)
 module SSet = Set.Make (String)
@@ -145,11 +143,12 @@ and texpr_kind =
   | (* "Regular" Function application *)
     TRegularFunApp of
       Function.t (* the function id *)
-      * resolved_inst list (* the list of instances needed *)
+      * resolved_instance Lazy.t list (* the list of instances needed *)
       * texpr list (* the list of argument *)
   | (* Type-Class Function application *)
     TTypeClassFunApp of
-      resolved_inst (* the instance in which the function called is defined *)
+      resolved_instance Lazy.t
+      (* the instance in which the function called is defined *)
       * Function.t (* the function id *)
       * texpr list (* the list of argument *)
   | TConstructor of Constructor.t * texpr list (* Constructor application *)
@@ -181,7 +180,7 @@ and texpr_kind =
       texpr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * texpr option (* The expression to evaluate if no constructor match *)
-  | TGetField of Variable.t * ttyp * int
+  | TGetField of Variable.t * int
 
 (** A typed pattern, they are not used in the TAst. *)
 type tpattern = {pat: tpat_kind; pat_typ: ttyp}
@@ -229,7 +228,7 @@ type local_env =
         (** Maps all type variable defined in the local environment to their id. *)
   ; vartype: (ttyp * Variable.t) SMap.t
         (** Maps the variable name to their type and unique id *)
-  ; instances: (int * TypeClass.t * ttyp list) list TypeClass.map
+  ; instances: (Instance.t * ttyp list) list TypeClass.map
         (** Instances available in the local environment with their argument position *)
   }
 
@@ -249,6 +248,7 @@ type global_env =
 type tfun =
   { tfun_id: Function.t (* id of the function implemented *)
   ; tfun_vars: Variable.t list (* argument of the function, in order *)
+  ; tfun_insts: Instance.t list (* instance of the function, in order *)
   ; tfun_arity: int (* number of argument *)
   ; tfun_texpr: texpr (* body of the function (None if builtins) *) }
 
@@ -256,7 +256,9 @@ type tschema =
   { tschema_id: Schema.t (* id of the shema implemented *)
   ; tschema_funs: tfun Function.map
         (* maps each function defined in this schema to its implementation. *)
-  }
+  ; tschema_insts:
+      Instance.t list (* instance required by the schema, in order *)
+  ; tschema_nb_funs: int }
 
 type tprogram =
   { tfuns: tfun Function.map

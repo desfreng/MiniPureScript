@@ -189,7 +189,7 @@ module Function = struct
   type set = Set.t
 end
 
-module Schema = struct
+module TypeClassBindedId (_ : sig end) = struct
   type t = int
 
   let schema_2_typeclass = Hashtbl.create 17
@@ -213,3 +213,7 @@ module Schema = struct
 
   type set = Set.t
 end
+
+module Schema = TypeClassBindedId (struct end)
+
+module Instance = TypeClassBindedId (struct end)

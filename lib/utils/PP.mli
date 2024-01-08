@@ -15,4 +15,6 @@ val setup_pp_inst :
 
 val pp_tprog : Format.formatter -> TypedAst.tprogram -> unit
 
+val pp_sprog : Format.formatter -> SympAst.sprogram -> unit
+
 val pp_aprog : Format.formatter -> AllocAst.aprogram -> unit

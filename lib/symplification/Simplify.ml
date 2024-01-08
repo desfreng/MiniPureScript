@@ -92,7 +92,7 @@ let mk_constr typ cid args =
   let close, vargs = introduce_let typ args in
   close (mk_sexpr typ (SConstructor (cid, vargs)))
 
-let rec simplify sigma e =
+let rec simplify_expr sigma e =
   let expr, typ = (e.expr, e.expr_typ) in
   match expr with
   | TConstant c ->
@@ -100,62 +100,64 @@ let rec simplify sigma e =
   | TVariable v ->
       mk_var sigma typ v
   | TNeg e ->
-      let e = simplify sigma e in
+      let e = simplify_expr sigma e in
       mk_neg typ e
   | TBinOp (lhs, op, rhs) ->
-      let lhs = simplify sigma lhs in
-      let rhs = simplify sigma rhs in
+      let lhs = simplify_expr sigma lhs in
+      let rhs = simplify_expr sigma rhs in
       mk_binop typ lhs op rhs
   | TRegularFunApp (fid, instl, args) ->
-      let args = List.map (simplify sigma) args in
+      let args = List.map (simplify_expr sigma) args in
+      let instl = List.map Lazy.force instl in
       mk_fun_call typ fid instl args
   | TTypeClassFunApp (inst, fid, args) ->
-      let args = List.map (simplify sigma) args in
+      let args = List.map (simplify_expr sigma) args in
+      let inst = Lazy.force inst in
       mk_inst_call typ inst fid args
   | TConstructor (cstr, args) ->
-      let args = List.map (simplify sigma) args in
+      let args = List.map (simplify_expr sigma) args in
       mk_constr typ cstr args
   | TIf (cond, tb, fb) ->
-      let cond = simplify sigma cond in
-      let tb = simplify sigma tb in
-      let fb = simplify sigma fb in
+      let cond = simplify_expr sigma cond in
+      let tb = simplify_expr sigma tb in
+      let fb = simplify_expr sigma fb in
       mk_if typ cond tb fb
   | TBlock l ->
-      let l = List.map (simplify sigma) l in
+      let l = List.map (simplify_expr sigma) l in
       mk_sexpr typ (SBlock l)
   | TLet (v, x, y) -> (
       (* let v = x in y *)
-      let x = simplify sigma x in
+      let x = simplify_expr sigma x in
       match x.symp_expr with
       | SConstant c ->
           (* We have a let v = constant in y
              So we add the substitution v -> constant *)
           Hashtbl.add sigma v (Right c) ;
-          simplify sigma y
+          simplify_expr sigma y
       | SVariable v' ->
           (* We have a let v = variable v' in y
              So we add the substitution v -> sigma (v') *)
           Hashtbl.add sigma v (subst sigma v') ;
-          simplify sigma y
+          simplify_expr sigma y
       | _ ->
           (* No easy simplification possible *)
           Hashtbl.add sigma v (Left v) ;
-          let y = simplify sigma y in
+          let y = simplify_expr sigma y in
           mk_sexpr typ (SLet (v, x, y)) )
   | TBind (v, v', y) ->
       (* We have a let v = v' in y
          So we add the substitution v -> sigma (v') *)
       Hashtbl.add sigma v (subst sigma v') ;
-      simplify sigma y
+      simplify_expr sigma y
   | TStringCase (var, var_typ, branchs, other) ->
       let var = subst sigma var in
-      let branchs = SMap.map (simplify sigma) branchs in
-      let other = simplify sigma other in
+      let branchs = SMap.map (simplify_expr sigma) branchs in
+      let other = simplify_expr sigma other in
       mk_string_case typ var var_typ branchs other
   | TIntCase (var, var_typ, branchs, other) ->
       let var = subst sigma var in
-      let branchs = IMap.map (simplify sigma) branchs in
-      let other = simplify sigma other in
+      let branchs = IMap.map (simplify_expr sigma) branchs in
+      let other = simplify_expr sigma other in
       mk_int_case typ var var_typ branchs other
   | TContructorCase (var, var_typ, branchs, other) ->
       let var =
@@ -167,10 +169,10 @@ let rec simplify sigma e =
                Not well typed ! *)
             assert false
       in
-      let branchs = Constructor.Map.map (simplify sigma) branchs in
-      let other = Option.map (simplify sigma) other in
+      let branchs = Constructor.Map.map (simplify_expr sigma) branchs in
+      let other = Option.map (simplify_expr sigma) other in
       mk_sexpr typ (SContructorCase (var, var_typ, branchs, other))
-  | TGetField (var, var_typ, f) ->
+  | TGetField (var, f) ->
       let var =
         match subst sigma var with
         | Either.Left v ->
@@ -180,7 +182,7 @@ let rec simplify sigma e =
                Not well typed ! *)
             assert false
       in
-      mk_sexpr typ (SGetField (var, var_typ, f))
+      mk_sexpr typ (SGetField (var, f))
 
 let simplfy_fun tfun =
   let sigma =
@@ -188,15 +190,19 @@ let simplfy_fun tfun =
     List.iter (fun v -> Hashtbl.add sigma v (Either.Left v)) tfun.tfun_vars ;
     sigma
   in
-  let body = simplify sigma tfun.tfun_texpr in
+  let body = simplify_expr sigma tfun.tfun_texpr in
   { sfun_id= tfun.tfun_id
   ; sfun_arity= tfun.tfun_arity
   ; sfun_body= body
-  ; sfun_vars= tfun.tfun_vars }
+  ; sfun_vars= tfun.tfun_vars
+  ; sfun_insts= tfun.tfun_insts }
 
 let simplify_schema tshema =
   let sschema_funs = Function.Map.map simplfy_fun tshema.tschema_funs in
-  {sschema_id= tshema.tschema_id; sschema_funs}
+  { sschema_id= tshema.tschema_id
+  ; sschema_funs
+  ; sschema_insts= tshema.tschema_insts
+  ; sschema_nb_funs= tshema.tschema_nb_funs }
 
 let simplify_program p =
   let sfuns = Function.Map.map simplfy_fun p.tfuns in

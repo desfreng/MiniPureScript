@@ -1,65 +1,155 @@
 open AllocAst
 
-let rec fv e =
+(** [local_inst] t compute the set of all local instances occuring in an
+    instance tree. *)
+let rec local_inst = function
+  | TLocalInstance i ->
+      Instance.Set.singleton i
+  | TGlobalInstance _ ->
+      Instance.Set.empty
+  | TGlobalSchema (_, l) ->
+      List.fold_left
+        (fun li i -> Instance.Set.union li (local_inst i))
+        Instance.Set.empty l
+
+(** [fv_and_li e] computes the free vars occuring and the local instance
+    used in [e]. *)
+let rec fv_and_li e =
   match e.symp_expr with
   | SConstant _ ->
-      Variable.Set.empty
-  | SVariable v | SGetField (v, _, _) ->
-      Variable.Set.singleton v
+      (Variable.Set.empty, Instance.Set.empty)
+  | SVariable v | SGetField (v, _) ->
+      (Variable.Set.singleton v, Instance.Set.empty)
   | SNeg arg | SNot arg ->
-      fv arg
+      fv_and_li arg
   | SArithOp (lhs, _, rhs)
   | SBooleanOp (lhs, _, rhs)
   | SCompare (lhs, _, rhs)
   | SStringConcat (lhs, rhs) ->
-      Variable.Set.union (fv lhs) (fv rhs)
-  | SFunctionCall (_, _, l) | SInstanceCall (_, _, l) | SConstructor (_, l) ->
-      List.fold_left
-        (fun acc -> function
-          | Either.Left v ->
-              Variable.Set.add v acc
-          | Either.Right _ ->
-              acc )
-        Variable.Set.empty l
+      let lhs_fv, lhs_ui = fv_and_li lhs in
+      let rhs_fv, rhs_ui = fv_and_li rhs in
+      (Variable.Set.union lhs_fv rhs_fv, Instance.Set.union lhs_ui rhs_ui)
+  | SFunctionCall (_, i, l) ->
+      let fv =
+        List.fold_left
+          (fun acc -> function
+            | Either.Left v ->
+                Variable.Set.add v acc
+            | Either.Right _ ->
+                acc )
+          Variable.Set.empty l
+      in
+      ( fv
+      , List.fold_left
+          (fun li i -> Instance.Set.union li (local_inst i))
+          Instance.Set.empty i )
+  | SInstanceCall (i, _, l) ->
+      let fv =
+        List.fold_left
+          (fun acc -> function
+            | Either.Left v ->
+                Variable.Set.add v acc
+            | Either.Right _ ->
+                acc )
+          Variable.Set.empty l
+      in
+      (fv, local_inst i)
+  | SConstructor (_, l) ->
+      ( List.fold_left
+          (fun acc -> function
+            | Either.Left v ->
+                Variable.Set.add v acc
+            | Either.Right _ ->
+                acc )
+          Variable.Set.empty l
+      , Instance.Set.empty )
   | SBlock l ->
       List.fold_left
-        (fun acc e -> Variable.Set.union acc (fv e))
-        Variable.Set.empty l
+        (fun (fv, ui) e ->
+          let fv_e, ui_e = fv_and_li e in
+          (Variable.Set.union fv fv_e, Instance.Set.union ui ui_e) )
+        (Variable.Set.empty, Instance.Set.empty)
+        l
   | SIf (a, b, c) ->
-      let s = fv a in
-      let s = Variable.Set.union s (fv b) in
-      let s = Variable.Set.union s (fv c) in
-      s
+      let fv, ui = fv_and_li a in
+      let fv, ui =
+        let fv_b, ui_b = fv_and_li b in
+        (Variable.Set.union fv fv_b, Instance.Set.union ui ui_b)
+      in
+      let fv, ui =
+        let fv_c, ui_c = fv_and_li c in
+        (Variable.Set.union fv fv_c, Instance.Set.union ui ui_c)
+      in
+      (fv, ui)
   | SLet (v, x, y) ->
-      let s = Variable.Set.remove v (fv y) in
-      let s = Variable.Set.union s (fv x) in
-      s
+      let fv, ui =
+        let fv_y, ui_y = fv_and_li y in
+        (Variable.Set.remove v fv_y, ui_y)
+      in
+      let fv, ui =
+        let fv_x, ui_x = fv_and_li x in
+        (Variable.Set.union fv fv_x, Instance.Set.union ui ui_x)
+      in
+      (fv, ui)
   | SCompareAndBranch {lhs; lower; equal; greater; _} ->
-      let s = Variable.Set.singleton lhs in
-      let s = Variable.Set.union s (fv lower) in
-      let s = Variable.Set.union s (fv equal) in
-      let s = Variable.Set.union s (fv greater) in
-      s
+      let fv = Variable.Set.singleton lhs in
+      let fv, ui =
+        let fv_l, ui_l = fv_and_li lower in
+        (Variable.Set.union fv fv_l, ui_l)
+      in
+      let fv, ui =
+        let fv_e, ui_e = fv_and_li equal in
+        (Variable.Set.union fv fv_e, Instance.Set.union ui ui_e)
+      in
+      let fv, ui =
+        let fv_g, ui_g = fv_and_li greater in
+        (Variable.Set.union fv fv_g, Instance.Set.union ui ui_g)
+      in
+      (fv, ui)
   | SContructorCase (v, _, branchs, other) ->
-      let s = Variable.Set.singleton v in
-      let s =
+      let fv, ui = (Variable.Set.singleton v, Instance.Set.empty) in
+      let fv, ui =
         Constructor.Map.fold
-          (fun _ e s -> Variable.Set.union s (fv e))
-          branchs s
+          (fun _ e (fv, ui) ->
+            let fv_e, ui_e = fv_and_li e in
+            (Variable.Set.union fv fv_e, Instance.Set.union ui ui_e) )
+          branchs (fv, ui)
       in
-      let s =
-        match other with None -> s | Some o -> Variable.Set.union s (fv o)
+      let fv, ui =
+        match other with
+        | None ->
+            (fv, ui)
+        | Some o ->
+            let fv_o, ui_o = fv_and_li o in
+            (Variable.Set.union fv fv_o, Instance.Set.union ui ui_o)
       in
-      s
+      (fv, ui)
 
-let fv =
-  List.fold_left (fun acc e -> Variable.Set.union acc (fv e)) Variable.Set.empty
+let fv_and_li l =
+  let fv, li =
+    List.fold_left
+      (fun (fv, ui) e ->
+        let fv_e, ui_e = fv_and_li e in
+        (Variable.Set.union fv fv_e, Instance.Set.union ui ui_e) )
+      (Variable.Set.empty, Instance.Set.empty)
+      l
+  in
+  (Variable.Set.elements fv, Instance.Set.elements li)
 
 type alloc_env =
   { word_size: int
-  ; var_pos: (Variable.t, var_position) Hashtbl.t
+  ; var_pos: (Variable.t, var_pos) Hashtbl.t
   ; new_local_blocks: (label, local_afun_part) Hashtbl.t
+  ; inst_pos: (Instance.t, inst_pos) Hashtbl.t
   ; fid: Function.t }
+
+let rec alloc_inst aenv = function
+  | TLocalInstance i ->
+      ALocalInst (Hashtbl.find aenv.inst_pos i)
+  | TGlobalInstance s ->
+      AGlobalInst s
+  | TGlobalSchema (s, args) ->
+      AGlobalSchema (s, List.map (alloc_inst aenv) args)
 
 let mk_aexpr typ ae = {alloc_expr= ae; alloc_expr_typ= typ}
 
@@ -101,10 +191,12 @@ let rec allocate_expr aenv fp_cur e =
       (mk_aexpr typ (AStringConcat (alhs, arhs)), max fp_max_1 fp_max_2)
   | SFunctionCall (fid, instl, vargs) ->
       let vargs_pos = List.map (get_pos aenv) vargs in
-      (mk_aexpr typ (AFunctionCall (fid, instl, vargs_pos)), fp_cur)
+      let ainstl = List.map (alloc_inst aenv) instl in
+      (mk_aexpr typ (AFunctionCall (fid, ainstl, vargs_pos)), fp_cur)
   | SInstanceCall (inst, fid, vargs) ->
       let vargs_pos = List.map (get_pos aenv) vargs in
-      (mk_aexpr typ (AInstanceCall (inst, fid, vargs_pos)), fp_cur)
+      let ainst = alloc_inst aenv inst in
+      (mk_aexpr typ (AInstanceCall (ainst, fid, vargs_pos)), fp_cur)
   | SConstructor (cid, vargs) ->
       let vargs_pos = List.map (get_pos aenv) vargs in
       (mk_aexpr typ (AConstructor (cid, vargs_pos)), fp_cur)
@@ -125,30 +217,40 @@ let rec allocate_expr aenv fp_cur e =
     | l ->
         (* We introduce a new closure with a new label. *)
         let block_lbl = local_lbl aenv.fid in
-        (* We compute the free vars in the do block. *)
-        let fv_list = Variable.Set.elements (fv l) in
-        (* We compute the position of each free variable occuring in this
-           closure *)
-        let vars_pos = List.map (Hashtbl.find aenv.var_pos) fv_list in
-        (* And we build it. *)
-        let clos = mk_aexpr typ (ALocalClosure (block_lbl, vars_pos)) in
-        (* Now, we process the new label. To do so, we create a new environment
+        (* We compute the free vars and the used local instances in the do
+           block. *)
+        let fv_list, li_list = fv_and_li l in
+        (* We process the new label. To do so, we create a new environment
            with the position of each variable in the closure. *)
         let closure_aenv =
           { var_pos= Hashtbl.create 17
           ; word_size= aenv.word_size
           ; fid= aenv.fid
-          ; new_local_blocks= aenv.new_local_blocks }
+          ; new_local_blocks= aenv.new_local_blocks
+          ; inst_pos= Hashtbl.create 17 }
         in
-        let _ =
-          List.iteri
+        let index =
+          (* the ith variable of the closure is a the offset
+             [(i + 1) * word_size]. Exemple :
+             the first one is a 8(%...), the second 16(%...), etc.
+
+             That's why we start index at 1. *)
+          List.fold_left
             (fun index v ->
-              (* the ith variable of the closure is a the offset
-                 [(index + 1) * word_size]. Exemple :
-                 the first one is a 8(%...), the second 16(%...), etc. *)
               Hashtbl.add closure_aenv.var_pos v
-                (AClosVar ((index + 1) * aenv.word_size)) )
-            fv_list
+                (AClosVar (index * aenv.word_size)) ;
+              index + 1 )
+            1 fv_list
+        in
+        let closure_size =
+          (* Local instances used in the closure are directly put after the
+             variables. *)
+          List.fold_left
+            (fun index v ->
+              Hashtbl.add closure_aenv.inst_pos v
+                (AClosInst (index * aenv.word_size)) ;
+              index + 1 )
+            index li_list
         in
         let block_fp_max, block_exprs =
           List.fold_left_map
@@ -162,14 +264,34 @@ let rec allocate_expr aenv fp_cur e =
           {local_body= block_exprs; local_stack_reserved= block_fp_max}
         in
         Hashtbl.add aenv.new_local_blocks block_lbl new_local_block ;
+        (* We compute the position of each free variable occuring in this
+           closure *)
+        let vars_pos =
+          List.map
+            (fun v ->
+              match Hashtbl.find_opt aenv.var_pos v with
+              | Some tmp ->
+                  tmp
+              | None ->
+                  Format.eprintf "Not found: %a@." Variable.pp v ;
+                  raise Not_found )
+            fv_list
+        in
+        (* We do the same for the local instances used *)
+        let loc_insts_pos = List.map (Hashtbl.find aenv.inst_pos) li_list in
+        (* And we build it. *)
+        let clos =
+          mk_aexpr typ
+            (ALocalClosure (block_lbl, loc_insts_pos, vars_pos, closure_size))
+        in
         (clos, fp_cur) )
   | SLet (v, x, y) ->
       let x, fp_max_1 = allocate_expr aenv fp_cur x in
       let fp_cur = fp_cur - aenv.word_size in
-      let v_pos = ALocalVar fp_cur in
+      let v_pos = AStackVar fp_cur in
       Hashtbl.add aenv.var_pos v v_pos ;
       let y, fp_max_2 = allocate_expr aenv fp_cur y in
-      (mk_aexpr typ (ALet (v_pos, x, y)), max fp_max_1 fp_max_2)
+      (mk_aexpr typ (ALet (fp_cur, x, y)), max fp_max_1 fp_max_2)
   | SCompareAndBranch d ->
       let v_pos = Hashtbl.find aenv.var_pos d.lhs in
       let lower, fp_max_1 = allocate_expr aenv fp_cur d.lower in
@@ -197,29 +319,53 @@ let rec allocate_expr aenv fp_cur e =
             (None, fp_max)
       in
       (mk_aexpr typ (AContructorCase (v_pos, v_typ, branches, other)), fp_max)
-  | SGetField (v, v_typ, index) ->
+  | SGetField (v, index) ->
       let v_pos = Hashtbl.find aenv.var_pos v in
-      (mk_aexpr typ (AGetField (v_pos, v_typ, index)), fp_cur)
+      (mk_aexpr typ (AGetField (v_pos, index)), fp_cur)
 
-let allocate_fun word_size sfun =
-  (* This function is compiled as a closure if its return type is Effect a. *)
+let allocate_fun word_size sfun schema_insts =
   let aenv =
     { var_pos= Hashtbl.create 17
     ; word_size
     ; fid= sfun.sfun_id
-    ; new_local_blocks= Hashtbl.create 17 }
+    ; new_local_blocks= Hashtbl.create 17
+    ; inst_pos= Hashtbl.create 17 }
   in
-  let _ =
+  let index =
     (* the ith argument of the function is at the offset [(index + 2) * word_size]
        of rbp.
        Exemple (x86_64):
          the first one is at 16(%rbp), the second 24(%rbp), etc.
        8(%rbp) is the return address and 0(%rbp) is the old rbp pointer.
+       That's why we start index at 2.
     *)
-    List.iteri
+    List.fold_left
       (fun index v ->
-        Hashtbl.add aenv.var_pos v (ALocalVar ((index + 2) * word_size)) )
-      sfun.sfun_vars
+        Hashtbl.add aenv.var_pos v (AStackVar (index * word_size)) ;
+        index + 1 )
+      2 sfun.sfun_vars
+  in
+  let _ =
+    match schema_insts with
+    | None ->
+        (* This is a "regular" function, its required instances are passed as argument. *)
+        (* We do the same for the instances required by f. *)
+        List.fold_left
+          (fun index i ->
+            Hashtbl.add aenv.inst_pos i (AStackInst (index * word_size)) ;
+            index + 1 )
+          index sfun.sfun_insts
+    | Some l ->
+        (* This is a function defined inside of an instance. If this instance
+           has any instance requirements, they are NOT passed as argument, but
+           added at the end of the instance we are defined in (an instance is
+           just a block of memory) *)
+        List.iter
+          (fun (i, i_inst_pos) ->
+            Hashtbl.add aenv.inst_pos i
+              (AInstInst (index * word_size, i_inst_pos)) )
+          l ;
+        0
   in
   let afun_body, afun_stack_reserved = allocate_expr aenv 0 sfun.sfun_body in
   let annex_parts = Hashtbl.to_seq aenv.new_local_blocks in
@@ -232,11 +378,18 @@ let allocate_fun word_size sfun =
   , fun_label )
 
 let allocate_schema word_size (sshema : sschema) =
+  let req_inst_pos =
+    List.mapi
+      (fun index inst -> (inst, (index + sshema.sschema_nb_funs) * word_size))
+      sshema.sschema_insts
+  in
   let aschema_funs, aschema_label =
     Function.Map.(
       fold
         (fun fid sfun (afuns, afun_labels) ->
-          let afun, fun_label = allocate_fun word_size sfun in
+          let afun, fun_label =
+            allocate_fun word_size sfun (Some req_inst_pos)
+          in
           (add fid afun afuns, add fid fun_label afun_labels) )
         sshema.sschema_funs (empty, empty) )
   in
@@ -248,7 +401,7 @@ let allocate_tprogram word_size (p : sprogram) =
     Function.Map.(
       fold
         (fun fid sfun (afuns, afun_labels) ->
-          let afun, fun_label = allocate_fun word_size sfun in
+          let afun, fun_label = allocate_fun word_size sfun None in
           (add fid afun afuns, add fid fun_label afun_labels) )
         p.sfuns (empty, empty) )
   in

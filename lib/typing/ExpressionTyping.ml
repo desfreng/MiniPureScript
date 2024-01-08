@@ -96,6 +96,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
         | Neq ->
             (TConstant (Bool false), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
         | _ ->
+            (* Prevented by the pattern. *)
             assert false
       else
         TypingError.expected_type_in lenv lhs_t

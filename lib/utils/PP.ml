@@ -124,11 +124,11 @@ let pp_binop ppf = function
       pp_print_string ppf "||"
 
 let rec pp_res_inst ppf = function
-  | ArgumentInstance i ->
-      fprintf ppf "(Instance Argument %d)" i
-  | GlobalInstance s ->
+  | TLocalInstance i ->
+      fprintf ppf "(Instance Argument %a)" Instance.pp i
+  | TGlobalInstance s ->
       fprintf ppf "(Instance %a)" Schema.pp s
-  | GlobalSchema (s, args) ->
+  | TGlobalSchema (s, args) ->
       fprintf ppf "@[<hv 2>(Schema %a" Schema.pp s ;
       List.iter (fprintf ppf "@;%a" pp_res_inst) args ;
       fprintf ppf ")@]"
@@ -200,7 +200,7 @@ let rec pp_texpr ppf e =
       | None ->
           () ) ;
       fprintf ppf ")@]"
-  | TGetField (e, _, i) ->
+  | TGetField (e, i) ->
       Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i Variable.pp e
 
 let pp_schema ppf sdecl =
@@ -273,7 +273,7 @@ let pp_tprog ppf tprog =
   Function.Map.iter (fun fn e -> pp_tfun tprog.genv ppf (fn, e)) tprog.tfuns
 
 let pp_var_pos ppf = function
-  | ALocalVar i ->
+  | AStackVar i ->
       fprintf ppf "%i(%%rbp)" i
   | AClosVar i ->
       fprintf ppf "%i(%%rsi)" i
@@ -316,6 +316,24 @@ let pp_direct_value ppf = function
   | FromMemory v_pos ->
       pp_var_pos ppf v_pos
 
+let pp_inst_pos ppf = function
+  | AStackInst i ->
+      fprintf ppf "%i(%%rbp)" i
+  | AClosInst i ->
+      fprintf ppf "%i(%%rsi)" i
+  | AInstInst (i, j) ->
+      fprintf ppf "address %i of %i(%%rbp)" j i
+
+let rec pp_alloc_inst ppf = function
+  | ALocalInst i ->
+      pp_inst_pos ppf i
+  | AGlobalInst s ->
+      Schema.pp ppf s
+  | AGlobalSchema (s, args) ->
+      fprintf ppf "(@[%a@;with%a@])" Schema.pp s
+        (pp_print_list pp_alloc_inst)
+        args
+
 let rec pp_aexpr ppf aexpr =
   match aexpr.alloc_expr with
   | AConstant c ->
@@ -338,44 +356,34 @@ let rec pp_aexpr ppf aexpr =
   | AStringConcat (lhs, rhs) ->
       fprintf ppf "@[<hv 2>(concat@;%a@;%a)@]" pp_aexpr lhs pp_aexpr rhs
   | AFunctionCall (f, insts, args) ->
-      fprintf ppf "@[<hv 2>(%a" Function.pp f ;
-      List.iter (fun i -> fprintf ppf "@;%a" pp_res_inst (Lazy.force i)) insts ;
-      List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
-      fprintf ppf ") @]"
-  (* | AFunctionClosure (fid, instl, args) ->
-      fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;@[%a@]@;and@;@[%a@])@]"
-        Function.pp fid
-        (pp_print_list (fun ppf i -> pp_res_inst ppf (Lazy.force i)))
-        instl
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
+        (pp_print_list pp_alloc_inst)
+        insts
         (pp_print_list pp_direct_value)
-        args *)
+        args
   | AInstanceCall (i, f, args) ->
-      fprintf ppf "@[<hv 2>(%a.%a" pp_res_inst (Lazy.force i) Function.pp f ;
-      List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
-      fprintf ppf ")@]"
-  (* | AInstanceClosure (inst, fid, args) ->
-      fprintf ppf "@[<hv 2>(closure of@;@[@[%a@]@[.%a@]@]@;with@;@[%a@])@]"
-        pp_res_inst (Lazy.force inst) Function.pp fid
+      fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_alloc_inst i Function.pp f
         (pp_print_list pp_direct_value)
-        args *)
+        args
   | AConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
-        fprintf ppf "@[<hv 2>(%a" Constructor.pp cstr ;
-        List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
-        fprintf ppf ")@]" )
+        fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
+          (pp_print_list pp_direct_value)
+          args )
   | AIf (cd, tb, fb) ->
       fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_aexpr cd pp_aexpr
         tb pp_aexpr fb
-  | ALocalClosure (l, vars) ->
-      fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;%a)@]" Label.pp l
-        (pp_print_list pp_var_pos) vars
+  | ALocalClosure (l, instl, vars, _) ->
+      fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;%a@;and@;%a)@]" Label.pp l
+        (pp_print_list pp_inst_pos)
+        instl (pp_print_list pp_var_pos) vars
   | ADoEffect e ->
       fprintf ppf "@[<hv 2>(call closure@;%a)@]" pp_aexpr e
-  | ALet (v, b, e) ->
-      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" pp_var_pos v
+  | ALet (v_pos, b, e) ->
+      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%i(%%rbp) = %a)@]@;in %a)@]" v_pos
         pp_aexpr b pp_aexpr e
   | ACompareAndBranch d ->
       fprintf ppf
@@ -397,7 +405,7 @@ let rec pp_aexpr ppf aexpr =
       | None ->
           () ) ;
       fprintf ppf ")@]"
-  | AGetField (e, _, i) ->
+  | AGetField (e, i) ->
       Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i pp_var_pos e
 
 let pp_afun genv ppf aexp =
@@ -439,3 +447,111 @@ let pp_aprog ppf (aprog : aprogram) =
   pp_set_geometry ppf ~max_indent:75 ~margin:100 ;
   Schema.Map.iter (fun _ -> pp_aschema aprog.aprog_genv ppf) aprog.aschemas ;
   Function.Map.iter (fun _ -> pp_afun aprog.aprog_genv ppf) aprog.afuns
+
+let pp_symp_args ppf = function
+  | Either.Left v ->
+      Variable.pp ppf v
+  | Either.Right cst ->
+      pp_cst ppf cst
+
+let rec pp_sexpr ppf sexpr =
+  match sexpr.symp_expr with
+  | SConstant c ->
+      fprintf ppf "@[<hv 2>(Constant %a)@]" pp_cst c
+  | SVariable v ->
+      fprintf ppf "@[<hv 2>(Variable %a)@]" Variable.pp v
+  | SNeg x ->
+      fprintf ppf "@[<hv 2>(neg@;%a)@]" pp_sexpr x
+  | SNot x ->
+      fprintf ppf "@[<hv 2>(not@;%a)@]" pp_sexpr x
+  | SArithOp (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_arith_op op pp_sexpr lhs pp_sexpr
+        rhs
+  | SBooleanOp (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_bool_op op pp_sexpr lhs pp_sexpr
+        rhs
+  | SCompare (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_compare_op op pp_sexpr lhs
+        pp_sexpr rhs
+  | SStringConcat (lhs, rhs) ->
+      fprintf ppf "@[<hv 2>(concat@;%a@;%a)@]" pp_sexpr lhs pp_sexpr rhs
+  | SFunctionCall (f, insts, args) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
+        (pp_print_list pp_res_inst)
+        insts
+        (pp_print_list pp_symp_args)
+        args
+  | SInstanceCall (i, f, args) ->
+      fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_res_inst i Function.pp f
+        (pp_print_list pp_symp_args)
+        args
+  | SConstructor (cstr, args) -> (
+    match args with
+    | [] ->
+        Constructor.pp ppf cstr
+    | args ->
+        fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
+          (pp_print_list pp_symp_args)
+          args )
+  | SIf (cd, tb, fb) ->
+      fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_sexpr cd pp_sexpr
+        tb pp_sexpr fb
+  | SBlock l ->
+      fprintf ppf "@[<hv 2>(do@.%a)@]" (pp_print_list pp_sexpr) l
+  | SLet (v, b, e) ->
+      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
+        pp_sexpr b pp_sexpr e
+  | SCompareAndBranch d ->
+      fprintf ppf
+        "@[<hv 2>(compare@ %a@ with@ %a@;\
+         @[lower@ %a@]@;\
+         @[equal@ %a@]@;\
+         @[equal@ %a@])@]" Variable.pp d.lhs pp_cst d.rhs pp_sexpr d.lower
+        pp_sexpr d.equal pp_sexpr d.greater
+  | SContructorCase (e, _, c, o) ->
+      fprintf ppf "@[<hv 2>(match %a@," Variable.pp e ;
+      Constructor.Map.iter
+        (fun c expr ->
+          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_sexpr expr
+          )
+        c ;
+      ( match o with
+      | Some o ->
+          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_sexpr o
+      | None ->
+          () ) ;
+      fprintf ppf ")@]"
+  | SGetField (e, i) ->
+      Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i Variable.pp e
+
+let pp_sfun genv ppf (fid, sfun) =
+  let fdecl =
+    match Function.Map.find fid genv.funs with
+    | Either.Left fdecl ->
+        (fdecl.fun_insts, fdecl.fun_args, fdecl.fun_ret)
+    | Right tid ->
+        let tdecl = TypeClass.Map.find tid genv.tclass in
+        let tc_fdecl = Function.Map.find fid tdecl.tclass_decls in
+        ([], tc_fdecl.tc_fun_args, tc_fdecl.tc_fun_ret)
+  in
+  fprintf ppf "fn %a::%a, %a" Function.pp fid pp_fun_typ fdecl Function.pp fid ;
+  List.iter (fprintf ppf " %a" Variable.pp) sfun.sfun_vars ;
+  fprintf ppf ":@.%a@." pp_sexpr sfun.sfun_body ;
+  pp_print_newline ppf ()
+
+let pp_sschema genv ppf sschema =
+  let sdecl =
+    List.find
+      (fun sdecl -> sdecl.schema_id = sschema.sschema_id)
+      (TypeClass.Map.find (Schema.typeclass sschema.sschema_id) genv.schemas)
+  in
+  fprintf ppf "Schema %a (%a):@." Schema.pp sschema.sschema_id pp_schema sdecl ;
+  Function.Map.iter (fun fn e -> pp_sfun genv ppf (fn, e)) sschema.sschema_funs ;
+  pp_print_newline ppf ()
+
+let pp_sprog ppf sprog =
+  pp_set_geometry ppf ~max_indent:75 ~margin:100 ;
+  Schema.Map.iter (fun _ -> pp_sschema sprog.sprog_genv ppf) sprog.sschemas ;
+  Function.Map.iter
+    (fun fn e -> pp_sfun sprog.sprog_genv ppf (fn, e))
+    sprog.sfuns

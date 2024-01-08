@@ -45,22 +45,18 @@ let list_type_variables =
     SSet.empty
 
 let instance_list_to_lenv instl =
-  let _, map =
-    List.fold_left
-      (fun (index, map) (inst_class, inst_args) ->
-        match TypeClass.Map.find_opt inst_class map with
+  let inst_list = List.map (fun (cid, _) -> Instance.fresh cid) instl in
+  let inst_map =
+    List.fold_left2
+      (fun map inst_id (inst_cid, inst_args) ->
+        match TypeClass.Map.find_opt inst_cid map with
         | Some l ->
-            ( index + 1
-            , TypeClass.Map.add inst_class
-                ((index, inst_class, inst_args) :: l)
-                map )
+            TypeClass.Map.add inst_cid ((inst_id, inst_args) :: l) map
         | None ->
-            ( index + 1
-            , TypeClass.Map.add inst_class [(index, inst_class, inst_args)] map
-            ) )
-      (0, TypeClass.Map.empty) instl
+            TypeClass.Map.add inst_cid [(inst_id, inst_args)] map )
+      TypeClass.Map.empty inst_list instl
   in
-  map
+  (inst_list, inst_map)
 
 (** [different_var_types error var_types] checks that all variables in the list
     [var_types] are distincts. If so return this list and this length. Otherwise,
@@ -164,8 +160,8 @@ let check_pats_and_expr permissive genv lenv fid (arity, ret_typ, args_typs)
     (!case_pos, pats, texpr, i2r)
 
 (** [check_fun_equations genv lenv fdecl fun_body] *)
-let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
-    fun_body permissive =
+let check_fun_equations genv lenv
+    (fun_id, tfun_arity, ret_typ, args_typ, fun_insts) fun_body permissive =
   (* We type all equations and verify that they are well-formed. *)
   let _, _, mat_pat, i2r =
     List.fold_left
@@ -217,7 +213,7 @@ let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
     compile_function genv ret_typ fargs mat_pat fun_id decl_list
   in
   (* We build the fimpl structure *)
-  {tfun_id= fun_id; tfun_vars; tfun_arity; tfun_texpr}
+  {tfun_id= fun_id; tfun_vars; tfun_arity; tfun_texpr; tfun_insts= fun_insts}
 
 (** [check_symbol genv symbol_name var_types constrs pos] checks that the symbol
     declaration of [symbol_name] with type argument [var_types] and constructors
@@ -456,11 +452,11 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
       class_decl.tclass_tvars prod_args ;
     sigma
   in
-  let instances = instance_list_to_lenv req_inst in
+  let insts_list, insts_map = instance_list_to_lenv req_inst in
   (* This is the environment in which we have to check the functions in [fun_decls] *)
-  let lenv = {tvars= tvars_map; instances; vartype= SMap.empty} in
-  let rec loop fun_impls fdone next_decls =
-    if next_decls = [] then (fun_impls, fdone)
+  let lenv = {tvars= tvars_map; instances= insts_map; vartype= SMap.empty} in
+  let rec loop fun_impls nb_funs fdone next_decls =
+    if next_decls = [] then (fun_impls, nb_funs, fdone)
     else
       let fname, fun_body, next_decls = get_functions_list None next_decls in
       let fname =
@@ -491,23 +487,26 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
             let fun_id = Option.get (Function.exists fname) in
             let fimpl =
               check_fun_equations genv lenv
-                (fun_id, tc_fdecl.tc_fun_arity, ret_typ, args_typ)
+                (fun_id, tc_fdecl.tc_fun_arity, ret_typ, args_typ, [])
                 fun_body permissive
             in
             let fun_impls = Function.Map.add fimpl.tfun_id fimpl fun_impls in
             let fdone = Function.Set.add fid fdone in
-            loop fun_impls fdone next_decls
+            loop fun_impls (nb_funs + 1) fdone next_decls
         | None ->
             TypingError.function_not_in_class fname prod_class decl
   in
-  let tschema_funs, fdone =
-    loop Function.Map.empty Function.Set.empty fun_decls
+  let tschema_funs, tschema_nb_funs, fdone =
+    loop Function.Map.empty 0 Function.Set.empty fun_decls
   in
   if
     Function.Map.for_all
       (fun fid _ -> Function.Set.mem fid fdone)
       class_decl.tclass_decls
-  then (genv, {tschema_id= sid; tschema_funs})
+  then
+    ( genv
+    , {tschema_id= sid; tschema_funs; tschema_insts= insts_list; tschema_nb_funs}
+    )
   else
     TypingError.missing_functions lenv prod_inst fdone prod_class class_decl
       decl
@@ -582,8 +581,8 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
           {genv with funs= Function.Map.add fid (Either.Left fdecl) genv.funs}
         in
         (* We add the instances to the environment *)
-        let instances = instance_list_to_lenv fun_insts in
-        let lenv = {lenv with instances} in
+        let insts_list, insts_map = instance_list_to_lenv fun_insts in
+        let lenv = {lenv with instances= insts_map} in
         let _, fun_body, next_decls =
           get_functions_list (Some fun_name) next_decls
         in
@@ -591,7 +590,7 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
         else
           let fimpl =
             check_fun_equations genv lenv
-              (fid, fdecl.fun_arity, fdecl.fun_ret, fdecl.fun_args)
+              (fid, fdecl.fun_arity, fdecl.fun_ret, fdecl.fun_args, insts_list)
               fun_body permissive
           in
           (* and add it to the program *)
@@ -599,6 +598,7 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
           let main_id = if fun_name = "main" then Some fid else main_id in
           check_prog permissive genv funs_impl schemas_impl main_id next_decls )
   | _ ->
+      (* [check_prog] prevents this from happening. *)
       assert false
 
 let check_program permissive p =

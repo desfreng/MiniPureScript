@@ -21,10 +21,11 @@ and symp_expr_kind =
       symp_expr * symp_expr (* The concatenation of two strings *)
   | SFunctionCall of
       Function.t (* the function id *)
-      * resolved_inst list (* the list of instances needed *)
+      * resolved_instance list (* the list of instances needed *)
       * (Variable.t, Constant.t) Either.t list (* the list of arguments *)
   | SInstanceCall of
-      resolved_inst (* the instance in which the function called is defined *)
+      resolved_instance
+      (* the instance in which the function called is defined *)
       * Function.t (* the function id *)
       * (Variable.t, Constant.t) Either.t list (* the list of arguments *)
   | SConstructor of
@@ -47,13 +48,14 @@ and symp_expr_kind =
       (* The expression to evaluate for each possible constructor *)
       * symp_expr option
     (* The expression to evaluate if no constructor match *)
-  | SGetField of Variable.t * ttyp * int
+  | SGetField of Variable.t * int
 (* Retrieve one of the expression of a symbol constructor *)
 
 (** Describe the implementation of a function *)
 type sfun =
   { sfun_id: Function.t
   ; sfun_vars: Variable.t list (* argument of the function, in order *)
+  ; sfun_insts: Instance.t list (* instance of the function, in order *)
   ; sfun_arity: int (* number of argument *)
   ; sfun_body: symp_expr (* body of the function *) }
 
@@ -61,7 +63,9 @@ type sschema =
   { sschema_id: Schema.t (* id of the shema implemented *)
   ; sschema_funs: sfun Function.map
         (* maps each function defined in this schema to its allocated implementation. *)
-  }
+  ; sschema_insts:
+      Instance.t list (* instance required by tge schema, in order *)
+  ; sschema_nb_funs: int (* The numer of function defined in this instance *) }
 
 type sprogram =
   { sfuns: sfun Function.map
