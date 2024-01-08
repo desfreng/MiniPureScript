@@ -95,7 +95,9 @@ module Variable = struct
       Hashtbl.add unique_int_to_name unique_int name ;
       unique_int
 
-  let name id = Hashtbl.find unique_int_to_name id
+  let name id =
+    let s = Hashtbl.find unique_int_to_name id in
+    if s = "" then "var_" ^ string_of_int id else s
 
   let pp ppf t = Format.pp_print_string ppf (name t)
 

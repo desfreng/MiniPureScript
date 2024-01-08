@@ -15,7 +15,7 @@ let make_expr expr expr_typ =
   (* This expression is of type Unit, so its value can only be unit.
      Moreover, no side effect can occurs in [expr] (otherwise it
      would be an Effect Unit). So this is just the unit type ! ! *)
-  if is_unit_t expr_typ then {expr= TConstant TUnit; expr_typ}
+  if is_unit_t expr_typ then {expr= TConstant Unit; expr_typ}
   else {expr; expr_typ}
 
 (** return the expression and its computed type with no instance to resolve. *)
@@ -46,18 +46,18 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
         return (TVariable vid) vtyp
     | None -> (
       match Function.exists "unit" with
-      | Some fid ->
-          type_fun_call genv lenv (fid, []) expr
+      | Some _ ->
+          failwith "Global Constant are not yet suported"
       | None ->
-          return (TConstant TUnit) unit_t ) )
+          return (TConstant Unit) unit_t ) )
   | ExprVar v -> (
     match SMap.find_opt v lenv.vartype with
     | Some (vtyp, vid) ->
         return (TVariable vid) vtyp
     | None -> (
       match Function.exists v with
-      | Some fid ->
-          type_fun_call genv lenv (fid, []) expr
+      | Some _ ->
+          failwith "Global Constant are not yet suported"
       | None ->
           TypingError.variable_not_declared v expr ) )
   | WithType (e, t) ->
@@ -92,9 +92,9 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
            We apply the same trick for a /= b with a::Unit and b::Unit. *)
         match op with
         | Eq ->
-            (TConstant (TBool true), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
+            (TConstant (Bool true), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
         | Neq ->
-            (TConstant (TBool false), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
+            (TConstant (Bool false), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
         | _ ->
             assert false
       else

@@ -1,545 +1,259 @@
 open AllocAst
-open DefaultTypingEnv
-open TypedAst
 
-let merge_map a b =
-  LabelMap.union
-    (fun _ a b ->
-      assert (a = b) ;
-      Some a )
-    a b
-
-let empty_map = LabelMap.empty
-
-type local_env =
-  { var_subst: (Variable.t, (Variable.t, Constant.t) Either.t) Hashtbl.t
-        (** Used to eliminate redondant access to memory. *)
-  ; var_pos: avar Variable.map }
-
-let subst lenv v =
-  match Hashtbl.find_opt lenv.var_subst v with Some v -> v | None -> Left v
-
-let fv_loc = function
-  | Either.Left v ->
+let rec fv e =
+  match e.symp_expr with
+  | SConstant _ ->
+      Variable.Set.empty
+  | SVariable v | SGetField (v, _, _) ->
       Variable.Set.singleton v
-  | Right _ ->
-      Variable.Set.empty
-
-let rec fv lenv e =
-  match e.expr with
-  | TConstant _ ->
-      Variable.Set.empty
-  | TVariable v ->
-      fv_loc (subst lenv v)
-  | TNeg arg | TGetField (arg, _) ->
-      fv lenv arg
-  | TBinOp (lhs, _, rhs) ->
-      Variable.Set.union (fv lenv lhs) (fv lenv rhs)
-  | TRegularFunApp (_, _, args)
-  | TTypeClassFunApp (_, _, args)
-  | TConstructor (_, args)
-  | TBlock args ->
+  | SNeg arg | SNot arg ->
+      fv arg
+  | SArithOp (lhs, _, rhs)
+  | SBooleanOp (lhs, _, rhs)
+  | SCompare (lhs, _, rhs)
+  | SStringConcat (lhs, rhs) ->
+      Variable.Set.union (fv lhs) (fv rhs)
+  | SFunctionCall (_, _, l) | SInstanceCall (_, _, l) | SConstructor (_, l) ->
       List.fold_left
-        (fun acc e -> Variable.Set.union acc (fv lenv e))
-        Variable.Set.empty args
-  | TIf (cond, tb, fb) ->
-      Variable.Set.union (fv lenv cond)
-        (Variable.Set.union (fv lenv tb) (fv lenv fb))
-  | TLet (v, a, e) ->
-      let s = Variable.Set.remove v (fv lenv e) in
-      Variable.Set.union s (fv lenv a)
-  | TConstantCase (m, case, o) ->
-      let s = fv lenv m in
-      let s =
-        Constant.Map.fold
-          (fun _ e acc -> Variable.Set.union acc (fv lenv e))
-          case s
-      in
-      let s =
-        match o with Some o -> Variable.Set.union s (fv lenv o) | None -> s
-      in
+        (fun acc -> function
+          | Either.Left v ->
+              Variable.Set.add v acc
+          | Either.Right _ ->
+              acc )
+        Variable.Set.empty l
+  | SBlock l ->
+      List.fold_left
+        (fun acc e -> Variable.Set.union acc (fv e))
+        Variable.Set.empty l
+  | SIf (a, b, c) ->
+      let s = fv a in
+      let s = Variable.Set.union s (fv b) in
+      let s = Variable.Set.union s (fv c) in
       s
-  | TContructorCase (m, case, o) ->
-      let s = fv lenv m in
+  | SLet (v, x, y) ->
+      let s = Variable.Set.remove v (fv y) in
+      let s = Variable.Set.union s (fv x) in
+      s
+  | SCompareAndBranch {lhs; lower; equal; greater; _} ->
+      let s = Variable.Set.singleton lhs in
+      let s = Variable.Set.union s (fv lower) in
+      let s = Variable.Set.union s (fv equal) in
+      let s = Variable.Set.union s (fv greater) in
+      s
+  | SContructorCase (v, _, branchs, other) ->
+      let s = Variable.Set.singleton v in
       let s =
         Constructor.Map.fold
-          (fun _ e acc -> Variable.Set.union acc (fv lenv e))
-          case s
+          (fun _ e s -> Variable.Set.union s (fv e))
+          branchs s
       in
       let s =
-        match o with Some o -> Variable.Set.union s (fv lenv o) | None -> s
+        match other with None -> s | Some o -> Variable.Set.union s (fv o)
       in
       s
 
-let fv lenv =
-  List.fold_left
-    (fun acc e -> Variable.Set.union acc (fv lenv e))
-    Variable.Set.empty
+let fv =
+  List.fold_left (fun acc e -> Variable.Set.union acc (fv e)) Variable.Set.empty
 
-let mk_const e c = {aexpr= AConstant c; aexpr_typ= e.expr_typ}
+type alloc_env =
+  { word_size: int
+  ; var_pos: (Variable.t, var_position) Hashtbl.t
+  ; new_local_blocks: (label, local_afun_part) Hashtbl.t
+  ; fid: Function.t }
 
-let mk_var e v = {aexpr= AVariable v; aexpr_typ= e.expr_typ}
+let mk_aexpr typ ae = {alloc_expr= ae; alloc_expr_typ= typ}
 
-let mk_neg e ae =
-  match ae.aexpr with
-  | AConstant (TInt i) ->
-      mk_const e (TInt (-i))
-  | _ ->
-      {aexpr= ANeg ae; aexpr_typ= e.expr_typ}
+let get_pos aenv = function
+  | Either.Left v ->
+      FromMemory (Hashtbl.find aenv.var_pos v)
+  | Either.Right cst ->
+      FromConstant cst
 
-let mk_binop e alhs op arhs =
-  match op with
-  | Ast.Eq -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant a, AConstant b ->
-        mk_const e (TBool (a = b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Neq -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant a, AConstant b ->
-        mk_const e (TBool (a <> b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Gt -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TBool (a > b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Ge -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TBool (a >= b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Lt -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TBool (a < b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Le -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TBool (a <= b))
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Plus -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TInt (a + b))
-    | AConstant (TInt 0), _ ->
-        arhs
-    | _, AConstant (TInt 0) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Minus -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TInt (a - b))
-    | AConstant (TInt 0), _ ->
-        mk_neg e arhs
-    | _, AConstant (TInt 0) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Mul -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TInt (a * b))
-    | AConstant (TInt 0), _ | _, AConstant (TInt 0) ->
-        (* The other branch cannot make any side effect because
-           it's type is Int (!= Effect a). So we don't need to evaluate it. *)
-        mk_const e (TInt 0)
-    | AConstant (TInt 1), _ ->
-        arhs
-    | _, AConstant (TInt 1) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Div -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TInt 0), _ | _, AConstant (TInt 0) ->
-        (* The other branch cannot make any side effect because
-           it's type is Int (!= Effect a). So we don't need to evaluate it.
-
-           In PureScript: forall x. x/0 = 0 *)
-        mk_const e (TInt 0)
-    | AConstant (TInt a), AConstant (TInt b) ->
-        mk_const e (TInt (a / b))
-    | _, AConstant (TInt 1) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Concat -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TString a), AConstant (TString b) ->
-        mk_const e (TString (a ^ b))
-    | AConstant (TString ""), _ ->
-        arhs
-    | _, AConstant (TString "") ->
-        alhs
-    | _, _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | And -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TBool a), AConstant (TBool b) ->
-        mk_const e (TBool (a && b))
-    | AConstant (TBool false), _ | _, AConstant (TBool false) ->
-        (* The other branch cannot make any side effect because it's type is
-           Boolean (!= Effect a). So we don't need to evaluate it. *)
-        mk_const e (TBool false)
-    | AConstant (TBool true), _ ->
-        arhs
-    | _, AConstant (TBool true) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-  | Or -> (
-    match (alhs.aexpr, arhs.aexpr) with
-    | AConstant (TBool a), AConstant (TBool b) ->
-        mk_const e (TBool (a || b))
-    | AConstant (TBool true), _ | _, AConstant (TBool true) ->
-        (* The other branch cannot make any side effect because it's type is
-           Boolean (!= Effect a). So we don't need to evaluate it. *)
-        mk_const e (TBool true)
-    | AConstant (TBool false), _ ->
-        arhs
-    | _, AConstant (TBool false) ->
-        alhs
-    | _ ->
-        {aexpr= ABinOp (alhs, op, arhs); aexpr_typ= e.expr_typ} )
-
-let mk_fun_call e fid instl aargs =
-  match fid with
-  | x when x = not_fid -> (
-    match (instl, aargs) with
-    | [], [x] -> (
-      match x.aexpr with
-      | AConstant (TBool b) ->
-          mk_const e (TBool (not b))
-      | _ ->
-          {aexpr= AFunctionCall (fid, [], [x]); aexpr_typ= e.expr_typ} )
-    | _ ->
-        (* Wrongly typed not function => Impossible *)
-        assert false )
-  | x when x = mod_fid -> (
-    match (instl, aargs) with
-    | [], [a; b] -> (
-      match (a.aexpr, b.aexpr) with
-      | _, AConstant (TInt 0) ->
-          mk_const e (TInt 0)
-      | AConstant (TInt a), AConstant (TInt b) ->
-          mk_const e (TInt (a mod b))
-      | _ ->
-          {aexpr= AFunctionCall (fid, [], [a; b]); aexpr_typ= e.expr_typ} )
-    | _ ->
-        (* Wrongly typed mod function => Impossible *)
-        assert false )
-  | _ ->
-      (* NEED to make a closure if we return an effect. *)
-      if is_effect_t e.expr_typ then
-        {aexpr= AFunctionClosure (fid, instl, aargs); aexpr_typ= e.expr_typ}
-      else {aexpr= AFunctionCall (fid, instl, aargs); aexpr_typ= e.expr_typ}
-
-let mk_type_class_call e inst fid aargs =
-  (* NEED to make a closure if we return an effect. *)
-  if is_effect_t e.expr_typ then
-    {aexpr= AInstanceClosure (inst, fid, aargs); aexpr_typ= e.expr_typ}
-  else {aexpr= AInstanceCall (inst, fid, aargs); aexpr_typ= e.expr_typ}
-
-let mk_constr e cid aargs =
-  {aexpr= AConstructor (cid, aargs); aexpr_typ= e.expr_typ}
-
-let mk_if e acond atb afb =
-  match acond.aexpr with
-  | AConstant (TBool true) ->
-      atb
-  | AConstant (TBool false) ->
-      afb
-  | _ ->
-      {aexpr= AIf (acond, atb, afb); aexpr_typ= e.expr_typ}
-
-let mk_block_closure e label vars =
-  {aexpr= ALocalClosure (label, vars); aexpr_typ= e.expr_typ}
-
-let mk_do_effect e ae =
-  (* match ae.aexpr with
-     | AFunctionClosure (fid, instl, aargs) ->
-         {aexpr= AFunctionCall (fid, instl, aargs); aexpr_typ= e.expr_typ}
-     | AInstanceClosure (inst, fid, aargs) ->
-         {aexpr= AInstanceCall (inst, fid, aargs); aexpr_typ= e.expr_typ}
-     | _ -> *)
-  {aexpr= ADoEffect ae; aexpr_typ= e.expr_typ}
-
-let mk_let e v x y = {aexpr= ALet (v, x, y); aexpr_typ= e.expr_typ}
-
-let mk_constant_case e pat branchs other =
-  {aexpr= AConstantCase (pat, branchs, other); aexpr_typ= e.expr_typ}
-
-let mk_constructor_case e pat branchs other =
-  {aexpr= AContructorCase (pat, branchs, other); aexpr_typ= e.expr_typ}
-
-let mk_get_field e ae field =
-  match ae.aexpr with
-  | AConstructor (_, aargs) ->
-      List.nth aargs field
-  | _ ->
-      {aexpr= AGetField (ae, field); aexpr_typ= e.expr_typ}
-
-let mk_var_pos e lenv = function
-  | Either.Left var ->
-      let var_pos = Variable.Map.find var lenv.var_pos in
-      mk_var e var_pos
-  | Right c ->
-      mk_const e c
-
-let rec allocate_expr fid lenv fp_pos e =
-  match e.expr with
-  | TConstant c ->
-      (mk_const e c, empty_map)
-  | TVariable v ->
-      (* We refer to an existing value, we do not make any closure here. *)
-      (mk_var_pos e lenv (subst lenv v), empty_map)
-  | TNeg e ->
-      (* The current expression is of type Int.
-         No Effect possible -> no closure added. *)
-      let ae, _ = allocate_expr fid lenv fp_pos e in
-      (mk_neg e ae, empty_map)
-  | TBinOp (lhs, op, rhs) ->
-      (* The current expression is of type Boolean, Int or String.
-         No Effect possible -> no closure added. *)
-      let alhs, _ = allocate_expr fid lenv fp_pos lhs in
-      let arhs, _ = allocate_expr fid lenv fp_pos rhs in
-      (mk_binop e alhs op arhs, empty_map)
-  | TRegularFunApp (fid, instl, args) ->
-      (* All closures introduced in the argument are required to be produced !
-         We return them *)
-      let lbl, aargs =
-        List.fold_left_map
-          (fun acc arg ->
-            let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (merge_map acc lbl, ae) )
-          empty_map args
-      in
-      (mk_fun_call e fid instl aargs, lbl)
-  | TTypeClassFunApp (inst, fid, args) ->
-      (* All closures introduced in the argument are required to be produced !
-         We return them *)
-      let lbl, aargs =
-        List.fold_left_map
-          (fun acc arg ->
-            let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (merge_map acc lbl, ae) )
-          empty_map args
-      in
-      (mk_type_class_call e inst fid aargs, lbl)
-  | TConstructor (cstrn, args) ->
-      (* The current expression is of type Symbol (?, ?).
-         No Effect possible -> no closure needed BUT a closure can occur in
-         one of the constructor's argument, and be required => We return them *)
-      let lbl, aargs =
-        List.fold_left_map
-          (fun acc arg ->
-            let ae, lbl = allocate_expr fid lenv fp_pos arg in
-            (merge_map acc lbl, ae) )
-          empty_map args
-      in
-      (mk_constr e cstrn aargs, lbl)
-  | TIf (cond, tb, fb) ->
-      (* All closures introduced in the branches are required to be produced !
-         We return them *)
-      let acond, _ = allocate_expr fid lenv fp_pos cond in
-      let atb, tb_lbl = allocate_expr fid lenv fp_pos tb in
-      let afb, fb_lbl = allocate_expr fid lenv fp_pos fb in
-      (mk_if e acond atb afb, merge_map tb_lbl fb_lbl)
-  | TBlock l -> (
+let rec allocate_expr aenv fp_cur e =
+  let sexpr, typ = (e.symp_expr, e.symp_expr_typ) in
+  match sexpr with
+  | SConstant c ->
+      (mk_aexpr typ (AConstant c), fp_cur)
+  | SVariable v ->
+      let v_pos = Hashtbl.find aenv.var_pos v in
+      (mk_aexpr typ (AVariable v_pos), fp_cur)
+  | SNeg se ->
+      let ae, fp_max = allocate_expr aenv fp_cur se in
+      (mk_aexpr typ (ANeg ae), fp_max)
+  | SNot se ->
+      let ae, fp_max = allocate_expr aenv fp_cur se in
+      (mk_aexpr typ (ANot ae), fp_max)
+  | SArithOp (lhs, op, rhs) ->
+      let alhs, fp_max_1 = allocate_expr aenv fp_cur lhs in
+      let arhs, fp_max_2 = allocate_expr aenv fp_cur rhs in
+      (mk_aexpr typ (AArithOp (alhs, op, arhs)), max fp_max_1 fp_max_2)
+  | SBooleanOp (lhs, op, rhs) ->
+      let alhs, fp_max_1 = allocate_expr aenv fp_cur lhs in
+      let arhs, fp_max_2 = allocate_expr aenv fp_cur rhs in
+      (mk_aexpr typ (ABooleanOp (alhs, op, arhs)), max fp_max_1 fp_max_2)
+  | SCompare (lhs, op, rhs) ->
+      let alhs, fp_max_1 = allocate_expr aenv fp_cur lhs in
+      let arhs, fp_max_2 = allocate_expr aenv fp_cur rhs in
+      (mk_aexpr typ (ACompare (alhs, op, arhs)), max fp_max_1 fp_max_2)
+  | SStringConcat (lhs, rhs) ->
+      let alhs, fp_max_1 = allocate_expr aenv fp_cur lhs in
+      let arhs, fp_max_2 = allocate_expr aenv fp_cur rhs in
+      (mk_aexpr typ (AStringConcat (alhs, arhs)), max fp_max_1 fp_max_2)
+  | SFunctionCall (fid, instl, vargs) ->
+      let vargs_pos = List.map (get_pos aenv) vargs in
+      (mk_aexpr typ (AFunctionCall (fid, instl, vargs_pos)), fp_cur)
+  | SInstanceCall (inst, fid, vargs) ->
+      let vargs_pos = List.map (get_pos aenv) vargs in
+      (mk_aexpr typ (AInstanceCall (inst, fid, vargs_pos)), fp_cur)
+  | SConstructor (cid, vargs) ->
+      let vargs_pos = List.map (get_pos aenv) vargs in
+      (mk_aexpr typ (AConstructor (cid, vargs_pos)), fp_cur)
+  | SIf (cond, tb, fb) ->
+      let acond, fp_max_1 = allocate_expr aenv fp_cur cond in
+      let atb, fp_max_2 = allocate_expr aenv fp_cur tb in
+      let afb, fp_max_3 = allocate_expr aenv fp_cur fb in
+      let fp_max = max fp_max_1 (max fp_max_2 fp_max_3) in
+      (mk_aexpr typ (AIf (acond, atb, afb)), fp_max)
+  | SBlock l -> (
     match l with
+    | [] ->
+        failwith "Empty do Block."
     | [x] ->
-        allocate_expr fid lenv fp_pos x
+        (* x is of type Effect Unit so we can just return it directly,
+           no closure needed (x is already one !) and no label introduced. *)
+        allocate_expr aenv fp_cur x
     | l ->
-        (* We do a closure here ! So : *)
-        (* We compute the free vars in the do block (while performing the
-           substitution !). *)
-        let fv_list = Variable.Set.elements (fv lenv l) in
-        (* We create a fresh label for this do block *)
-        let label = function_lbl fid in
+        (* We introduce a new closure with a new label. *)
+        let block_lbl = local_lbl aenv.fid in
+        (* We compute the free vars in the do block. *)
+        let fv_list = Variable.Set.elements (fv l) in
         (* We compute the position of each free variable occuring in this
            closure *)
-        let vars =
-          List.map (fun v -> Variable.Map.find v lenv.var_pos) fv_list
-        in
+        let vars_pos = List.map (Hashtbl.find aenv.var_pos) fv_list in
         (* And we build it. *)
-        let clos = mk_block_closure e label vars in
-        (* Now, we process the new label. To do so, we change the location of
-           the variable with their position in the closure. *)
-        let closure_lenv =
-          let new_var_pos, _ =
-            List.fold_left
-              (fun (vp, index) v ->
-                ( Variable.Map.update v
-                    (function
-                      | None ->
-                          (* v does not have a position ?! Impossible. *)
-                          assert false
-                      | Some _ ->
-                          Some (AClosVar index) )
-                    vp
-                , index + word_size ) )
-              (lenv.var_pos, 0) fv_list
-          in
-          {lenv with var_pos= new_var_pos}
+        let clos = mk_aexpr typ (ALocalClosure (block_lbl, vars_pos)) in
+        (* Now, we process the new label. To do so, we create a new environment
+           with the position of each variable in the closure. *)
+        let closure_aenv =
+          { var_pos= Hashtbl.create 17
+          ; word_size= aenv.word_size
+          ; fid= aenv.fid
+          ; new_local_blocks= aenv.new_local_blocks }
         in
-        let lbl, block_expr =
+        let _ =
+          List.iteri
+            (fun index v ->
+              (* the ith variable of the closure is a the offset
+                 [(index + 1) * word_size]. Exemple :
+                 the first one is a 8(%...), the second 16(%...), etc. *)
+              Hashtbl.add closure_aenv.var_pos v
+                (AClosVar ((index + 1) * aenv.word_size)) )
+            fv_list
+        in
+        let block_fp_max, block_exprs =
           List.fold_left_map
-            (fun acc arg ->
-              let ae, lbl = allocate_expr fid closure_lenv initial_fp arg in
-              (merge_map acc lbl, mk_do_effect arg ae) )
-            empty_map l
+            (fun fp_max arg ->
+              let ae, fp_max_expr = allocate_expr closure_aenv 0 arg in
+              let ae = mk_aexpr typ (ADoEffect ae) in
+              (max fp_max fp_max_expr, ae) )
+            0 l
         in
-        let lbl = LabelMap.add label block_expr lbl in
-        (clos, lbl) )
-  (* let v = x in y *)
-  | TLet (v, x, y) -> (
-      (* No closure here, indeed :
-         - If the expression x is of type Effect a, then it is yet a closure.
-         - If the expression y is of type Effect a, than it will be (later) a
-           closure. *)
-      (* But all closures introduced in x or in y are required to be produced !
-         We return them *)
-      let default_let () =
-        (* Default case if no substitution occurs. *)
-        let ax, x_lbl = allocate_expr fid lenv fp_pos x in
-        let v_pos, fp_pos = (ALocalVar fp_pos, fp_pos - word_size) in
-        let lenv = {lenv with var_pos= Variable.Map.add v v_pos lenv.var_pos} in
-        let ay, y_lbl = allocate_expr fid lenv fp_pos y in
-        (mk_let e v_pos ax ay, merge_map x_lbl y_lbl)
-      in
-      match x.expr with
-      | TVariable v' ->
-          (* we have a let v = v' in y with v and v' variables !
-             So we substitute v with σ(v') in x. *)
-          let v_pos = subst lenv v' in
-          Hashtbl.add lenv.var_subst v v_pos ;
-          allocate_expr fid lenv fp_pos y
-      | TConstant c ->
-          (* we have a let v = c in y with v a variable et c a constant !
-             So we substitute v with c in x. *)
-          Hashtbl.add lenv.var_subst v (Either.Right c) ;
-          allocate_expr fid lenv fp_pos y
-      | _ ->
-          default_let () )
-  | TConstantCase (pat, branchs, other) ->
-      (* All closures introduced in the branches are required to be produced !
-         We return them. We can ignore the closures produced in the argument
-         because no side effect are allowed in [pat] (because of it's type). *)
-      let apat, _ = allocate_expr fid lenv fp_pos pat in
-      let abranchs, lbls =
-        Constant.Map.fold
-          (fun cst branch (nmap, lbls) ->
-            let ae, lbl = allocate_expr fid lenv fp_pos branch in
-            (Constant.Map.add cst ae nmap, merge_map lbls lbl) )
-          branchs
-          (Constant.Map.empty, empty_map)
-      in
-      let aother, lbl =
-        match other with
-        | Some o ->
-            let ae, lbl = allocate_expr fid lenv fp_pos o in
-            (Some ae, merge_map lbls lbl)
-        | None ->
-            (None, lbls)
-      in
-      (mk_constant_case e apat abranchs aother, lbl)
-  | TContructorCase (pat, branchs, other) ->
-      (* All closures introduced in the branches are required to be produced !
-         We return them. We can ignore the closures produced in the argument
-         because no side effect are allowed in [pat] (because of it's type). *)
-      let apat, _ = allocate_expr fid lenv fp_pos pat in
-      let abranchs, lbls =
+        let new_local_block =
+          {local_body= block_exprs; local_stack_reserved= block_fp_max}
+        in
+        Hashtbl.add aenv.new_local_blocks block_lbl new_local_block ;
+        (clos, fp_cur) )
+  | SLet (v, x, y) ->
+      let x, fp_max_1 = allocate_expr aenv fp_cur x in
+      let fp_cur = fp_cur - aenv.word_size in
+      let v_pos = ALocalVar fp_cur in
+      Hashtbl.add aenv.var_pos v v_pos ;
+      let y, fp_max_2 = allocate_expr aenv fp_cur y in
+      (mk_aexpr typ (ALet (v_pos, x, y)), max fp_max_1 fp_max_2)
+  | SCompareAndBranch d ->
+      let v_pos = Hashtbl.find aenv.var_pos d.lhs in
+      let lower, fp_max_1 = allocate_expr aenv fp_cur d.lower in
+      let equal, fp_max_2 = allocate_expr aenv fp_cur d.equal in
+      let greater, fp_max_3 = allocate_expr aenv fp_cur d.greater in
+      let fp_max = max fp_max_1 (max fp_max_2 fp_max_3) in
+      ( mk_aexpr typ
+          (ACompareAndBranch {lower; equal; greater; rhs= d.rhs; lhs= v_pos})
+      , fp_max )
+  | SContructorCase (v, v_typ, branches, other) ->
+      let v_pos = Hashtbl.find aenv.var_pos v in
+      let branches, fp_max =
         Constructor.Map.fold
-          (fun cst branch (nmap, lbls) ->
-            Format.eprintf "@.%a@." Constructor.pp cst ;
-            let ae, lbl = allocate_expr fid lenv fp_pos branch in
-            (Constructor.Map.add cst ae nmap, merge_map lbls lbl) )
-          branchs
-          (Constructor.Map.empty, empty_map)
+          (fun cstr arg (branches, fp_max) ->
+            let ae, fp_max_arg = allocate_expr aenv fp_cur arg in
+            (Constructor.Map.add cstr ae branches, max fp_max fp_max_arg) )
+          branches (Constructor.Map.empty, 0)
       in
-      let aother, lbl =
+      let other, fp_max =
         match other with
         | Some o ->
-            let ae, lbl = allocate_expr fid lenv fp_pos o in
-            (Some ae, merge_map lbls lbl)
+            let other, fp_max_other = allocate_expr aenv fp_cur o in
+            (Some other, max fp_max fp_max_other)
         | None ->
-            (None, lbls)
+            (None, fp_max)
       in
-      (mk_constructor_case e apat abranchs aother, lbl)
-  | TGetField (e, f) ->
-      (* We refer to an existing value, we do not make any closure here. *)
-      let ae, _ = allocate_expr fid lenv fp_pos e in
-      (mk_get_field e ae f, empty_map)
+      (mk_aexpr typ (AContructorCase (v_pos, v_typ, branches, other)), fp_max)
+  | SGetField (v, v_typ, index) ->
+      let v_pos = Hashtbl.find aenv.var_pos v in
+      (mk_aexpr typ (AGetField (v_pos, v_typ, index)), fp_cur)
 
-let allocate_fun genv tfun =
+let allocate_fun word_size sfun =
   (* This function is compiled as a closure if its return type is Effect a. *)
-  let is_closure_fun =
-    let ret_t =
-      match Function.Map.find tfun.tfun_id genv.funs with
-      | Either.Left funct ->
-          funct.fun_ret
-      | Either.Right tid ->
-          let tdecl = TypeClass.Map.find tid genv.tclass in
-          let _, _, ret_t =
-            SMap.find (Function.name tfun.tfun_id) tdecl.tclass_decls
-          in
-          ret_t
-    in
-    is_effect_t ret_t
+  let aenv =
+    { var_pos= Hashtbl.create 17
+    ; word_size
+    ; fid= sfun.sfun_id
+    ; new_local_blocks= Hashtbl.create 17 }
   in
-  match tfun.tfun_texpr with
-  | Some fun_expr ->
-      let _, var_pos =
-        if is_closure_fun then
-          List.fold_left
-            (fun (v_index, v_map) v ->
-              (v_index + word_size, Variable.Map.add v (AClosVar v_index) v_map)
-              )
-            (0, Variable.Map.empty) tfun.tfun_vars
-        else
-          List.fold_left
-            (fun (v_index, v_map) v ->
-              (v_index + word_size, Variable.Map.add v (ALocalVar v_index) v_map)
-              )
-            (call_stack_size, Variable.Map.empty)
-            tfun.tfun_vars
-      in
-      let lenv = {var_subst= Hashtbl.create 17; var_pos} in
-      let ae, lbls = allocate_expr tfun.tfun_id lenv initial_fp fun_expr in
-      let fun_label = function_lbl tfun.tfun_id in
-      { afun_id= tfun.tfun_id
-      ; afun_arity= tfun.tfun_arity
-      ; afun_body= Some (ae, fun_label)
-      ; afun_annex= lbls }
-  | None ->
-      { afun_id= tfun.tfun_id
-      ; afun_arity= tfun.tfun_arity
-      ; afun_body= None
-      ; afun_annex= empty_map }
-
-let allocate_schema genv tshema =
-  let aschema_funs = Function.Map.map (allocate_fun genv) tshema.tschema_funs in
-  {aschema_id= tshema.tschema_id; aschema_funs}
-
-let allocate_tprogram p =
-  let afuns = Function.Map.map (allocate_fun p.genv) p.tfuns in
-  let aschemas = Schema.Map.map (allocate_schema p.genv) p.tschemas in
-  let main_lbl =
-    let maindecl = Function.Map.find p.main_id afuns in
-    match maindecl.afun_body with
-    | Some (_, label) ->
-        label
-    | None ->
-        assert false
+  let _ =
+    (* the ith argument of the function is at the offset [(index + 2) * word_size]
+       of rbp.
+       Exemple (x86_64):
+         the first one is at 16(%rbp), the second 24(%rbp), etc.
+       8(%rbp) is the return address and 0(%rbp) is the old rbp pointer.
+    *)
+    List.iteri
+      (fun index v ->
+        Hashtbl.add aenv.var_pos v (ALocalVar ((index + 2) * word_size)) )
+      sfun.sfun_vars
   in
-  {afuns; aschemas; main= (p.main_id, main_lbl); genv= p.genv}
+  let afun_body, afun_stack_reserved = allocate_expr aenv 0 sfun.sfun_body in
+  let annex_parts = Hashtbl.to_seq aenv.new_local_blocks in
+  let fun_label = function_lbl sfun.sfun_id in
+  ( { afun_id= sfun.sfun_id
+    ; afun_arity= sfun.sfun_arity
+    ; afun_body
+    ; afun_annex= annex_parts
+    ; afun_stack_reserved }
+  , fun_label )
+
+let allocate_schema word_size (sshema : sschema) =
+  let aschema_funs, aschema_label =
+    Function.Map.(
+      fold
+        (fun fid sfun (afuns, afun_labels) ->
+          let afun, fun_label = allocate_fun word_size sfun in
+          (add fid afun afuns, add fid fun_label afun_labels) )
+        sshema.sschema_funs (empty, empty) )
+  in
+  {aschema_id= sshema.sschema_id; aschema_funs; aschema_label}
+
+let allocate_tprogram word_size (p : sprogram) =
+  let aschemas = Schema.Map.map (allocate_schema word_size) p.sschemas in
+  let afuns, afuns_labels =
+    Function.Map.(
+      fold
+        (fun fid sfun (afuns, afun_labels) ->
+          let afun, fun_label = allocate_fun word_size sfun in
+          (add fid afun afuns, add fid fun_label afun_labels) )
+        p.sfuns (empty, empty) )
+  in
+  { afuns
+  ; aschemas
+  ; aprog_genv= p.sprog_genv
+  ; afuns_labels
+  ; aprog_main= p.sprog_main }

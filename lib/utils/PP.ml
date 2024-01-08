@@ -86,13 +86,13 @@ let setup_pp_ttyp_inst lenv ?(atomic = false) insts tl =
   , setup_pp_ttyp ~atomic lenv tl )
 
 let pp_cst ppf = function
-  | Constant.TBool b ->
+  | Constant.Bool b ->
       pp_print_bool ppf b
-  | Constant.TInt i ->
+  | Constant.Int i ->
       pp_print_int ppf i
-  | Constant.TString s ->
+  | Constant.String s ->
       fprintf ppf "\"%s\"" s
-  | Constant.TUnit ->
+  | Constant.Unit ->
       pp_print_string ppf "unit"
 
 let pp_binop ppf = function
@@ -170,20 +170,25 @@ let rec pp_texpr ppf e =
   | TLet (v, b, e) ->
       fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
         pp_texpr b pp_texpr e
-  | TConstantCase (e, c, o) ->
-      fprintf ppf "@[<hv 2>(match %a@," pp_texpr e ;
-      Constant.Map.iter
-        (fun c expr ->
-          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," pp_cst c pp_texpr expr )
+  | TBind (v, v', e) ->
+      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
+        Variable.pp v' pp_texpr e
+  | TStringCase (v, _, c, o) ->
+      fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
+      SMap.iter
+        (fun c expr -> fprintf ppf "@[<hv 2>(%s =>@;%a)@]@," c pp_texpr expr)
         c ;
-      ( match o with
-      | Some o ->
-          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o
-      | None ->
-          () ) ;
+      fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o ;
       fprintf ppf ")@]"
-  | TContructorCase (e, c, o) ->
-      fprintf ppf "@[<hv 2>(match %a@," pp_texpr e ;
+  | TIntCase (v, _, c, o) ->
+      fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
+      IMap.iter
+        (fun c expr -> fprintf ppf "@[<hv 2>(%d =>@;%a)@]@," c pp_texpr expr)
+        c ;
+      fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o ;
+      fprintf ppf ")@]"
+  | TContructorCase (v, _, c, o) ->
+      fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
       Constructor.Map.iter
         (fun c expr ->
           fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_texpr expr
@@ -195,8 +200,8 @@ let rec pp_texpr ppf e =
       | None ->
           () ) ;
       fprintf ppf ")@]"
-  | TGetField (e, i) ->
-      Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i pp_texpr e
+  | TGetField (e, _, i) ->
+      Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i Variable.pp e
 
 let pp_schema ppf sdecl =
   match sdecl.schema_req with
@@ -244,11 +249,7 @@ let pp_tfun genv ppf (fid, exp) =
   in
   fprintf ppf "fn %a::%a, %a" Function.pp fid pp_fun_typ fdecl Function.pp fid ;
   List.iter (fprintf ppf " %a" Variable.pp) exp.tfun_vars ;
-  ( match exp.tfun_texpr with
-  | Some e ->
-      fprintf ppf ":@.%a@." pp_texpr e
-  | None ->
-      pp_print_newline ppf () ) ;
+  fprintf ppf ":@.%a@." pp_texpr exp.tfun_texpr ;
   pp_print_newline ppf ()
 
 let pp_tschema genv ppf schema_impl =
@@ -277,41 +278,93 @@ let pp_var_pos ppf = function
   | AClosVar i ->
       fprintf ppf "%i(%%rsi)" i
 
+let pp_arith_op ppf = function
+  | SympAst.Add ->
+      pp_print_string ppf "+"
+  | SympAst.Sub ->
+      pp_print_string ppf "-"
+  | SympAst.Mul ->
+      pp_print_string ppf "*"
+  | SympAst.Div ->
+      pp_print_string ppf "/"
+  | SympAst.Mod ->
+      pp_print_string ppf "%"
+
+let pp_bool_op ppf = function
+  | SympAst.And ->
+      pp_print_string ppf "&&"
+  | SympAst.Or ->
+      pp_print_string ppf "||"
+
+let pp_compare_op ppf = function
+  | SympAst.Equal ->
+      pp_print_string ppf "=="
+  | SympAst.NotEqual ->
+      pp_print_string ppf "/="
+  | SympAst.Greater ->
+      pp_print_string ppf ">"
+  | SympAst.GreaterEqual ->
+      pp_print_string ppf ">="
+  | SympAst.Lower ->
+      pp_print_string ppf "<"
+  | SympAst.LowerEqual ->
+      pp_print_string ppf "<="
+
+let pp_direct_value ppf = function
+  | FromConstant c ->
+      pp_cst ppf c
+  | FromMemory v_pos ->
+      pp_var_pos ppf v_pos
+
 let rec pp_aexpr ppf aexpr =
-  match aexpr.aexpr with
+  match aexpr.alloc_expr with
   | AConstant c ->
       fprintf ppf "@[<hv 2>(Constant %a)@]" pp_cst c
   | AVariable v ->
       fprintf ppf "@[<hv 2>(Variable %a)@]" pp_var_pos v
   | ANeg x ->
       fprintf ppf "@[<hv 2>(neg@;%a)@]" pp_aexpr x
-  | ABinOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_binop op pp_aexpr lhs pp_aexpr rhs
+  | ANot x ->
+      fprintf ppf "@[<hv 2>(not@;%a)@]" pp_aexpr x
+  | AArithOp (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_arith_op op pp_aexpr lhs pp_aexpr
+        rhs
+  | ABooleanOp (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_bool_op op pp_aexpr lhs pp_aexpr
+        rhs
+  | ACompare (lhs, op, rhs) ->
+      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_compare_op op pp_aexpr lhs
+        pp_aexpr rhs
+  | AStringConcat (lhs, rhs) ->
+      fprintf ppf "@[<hv 2>(concat@;%a@;%a)@]" pp_aexpr lhs pp_aexpr rhs
   | AFunctionCall (f, insts, args) ->
       fprintf ppf "@[<hv 2>(%a" Function.pp f ;
       List.iter (fun i -> fprintf ppf "@;%a" pp_res_inst (Lazy.force i)) insts ;
-      List.iter (fprintf ppf "@;%a" pp_aexpr) args ;
+      List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
       fprintf ppf ") @]"
-  | AFunctionClosure (fid, instl, args) ->
+  (* | AFunctionClosure (fid, instl, args) ->
       fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;@[%a@]@;and@;@[%a@])@]"
         Function.pp fid
         (pp_print_list (fun ppf i -> pp_res_inst ppf (Lazy.force i)))
-        instl (pp_print_list pp_aexpr) args
+        instl
+        (pp_print_list pp_direct_value)
+        args *)
   | AInstanceCall (i, f, args) ->
       fprintf ppf "@[<hv 2>(%a.%a" pp_res_inst (Lazy.force i) Function.pp f ;
-      List.iter (fprintf ppf "@;%a" pp_aexpr) args ;
+      List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
       fprintf ppf ")@]"
-  | AInstanceClosure (inst, fid, args) ->
+  (* | AInstanceClosure (inst, fid, args) ->
       fprintf ppf "@[<hv 2>(closure of@;@[@[%a@]@[.%a@]@]@;with@;@[%a@])@]"
-        pp_res_inst (Lazy.force inst) Function.pp fid (pp_print_list pp_aexpr)
-        args
+        pp_res_inst (Lazy.force inst) Function.pp fid
+        (pp_print_list pp_direct_value)
+        args *)
   | AConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
         fprintf ppf "@[<hv 2>(%a" Constructor.pp cstr ;
-        List.iter (fprintf ppf "@;%a" pp_aexpr) args ;
+        List.iter (fprintf ppf "@;%a" pp_direct_value) args ;
         fprintf ppf ")@]" )
   | AIf (cd, tb, fb) ->
       fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_aexpr cd pp_aexpr
@@ -320,24 +373,19 @@ let rec pp_aexpr ppf aexpr =
       fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;%a)@]" Label.pp l
         (pp_print_list pp_var_pos) vars
   | ADoEffect e ->
-      fprintf ppf "@[<hv 2>(call@;%a)@]" pp_aexpr e
+      fprintf ppf "@[<hv 2>(call closure@;%a)@]" pp_aexpr e
   | ALet (v, b, e) ->
       fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" pp_var_pos v
         pp_aexpr b pp_aexpr e
-  | AConstantCase (e, c, o) ->
-      fprintf ppf "@[<hv 2>(match %a@," pp_aexpr e ;
-      Constant.Map.iter
-        (fun c expr ->
-          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," pp_cst c pp_aexpr expr )
-        c ;
-      ( match o with
-      | Some o ->
-          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_aexpr o
-      | None ->
-          () ) ;
-      fprintf ppf ")@]"
-  | AContructorCase (e, c, o) ->
-      fprintf ppf "@[<hv 2>(match %a@," pp_aexpr e ;
+  | ACompareAndBranch d ->
+      fprintf ppf
+        "@[<hv 2>(compare@ %a@ with@ %a@;\
+         @[lower@ %a@]@;\
+         @[equal@ %a@]@;\
+         @[equal@ %a@])@]" pp_var_pos d.lhs pp_cst d.rhs pp_aexpr d.lower
+        pp_aexpr d.equal pp_aexpr d.greater
+  | AContructorCase (e, _, c, o) ->
+      fprintf ppf "@[<hv 2>(match %a@," pp_var_pos e ;
       Constructor.Map.iter
         (fun c expr ->
           fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_aexpr expr
@@ -349,8 +397,8 @@ let rec pp_aexpr ppf aexpr =
       | None ->
           () ) ;
       fprintf ppf ")@]"
-  | AGetField (e, i) ->
-      Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i pp_aexpr e
+  | AGetField (e, _, i) ->
+      Format.fprintf ppf "@[<hv 2>(field %i of@ %a)@]" i pp_var_pos e
 
 let pp_afun genv ppf aexp =
   let fdecl =
@@ -362,19 +410,14 @@ let pp_afun genv ppf aexp =
         let tc_fdecl = Function.Map.find aexp.afun_id tdecl.tclass_decls in
         ([], tc_fdecl.tc_fun_args, tc_fdecl.tc_fun_ret)
   in
-  fprintf ppf "fn %a::%a" Function.pp aexp.afun_id pp_fun_typ fdecl ;
-  ( match aexp.afun_body with
-  | Some (body, l) ->
-      pp_print_newline ppf () ;
-      LabelMap.iter
-        (fun l aexprs ->
-          fprintf ppf "%a:@.  @[%a@]@." Label.pp l
-            (pp_print_list ~pp_sep:(fun ppf -> pp_force_newline ppf) pp_aexpr)
-            aexprs )
-        aexp.afun_annex ;
-      fprintf ppf "%a@.  @[%a@]@." Label.pp l pp_aexpr body
-  | None ->
-      pp_print_newline ppf () ) ;
+  fprintf ppf "fn %a::%a@." Function.pp aexp.afun_id pp_fun_typ fdecl ;
+  Seq.iter
+    (fun (l, loc_part) ->
+      fprintf ppf "%a:@.  @[%a@]@." Label.pp l
+        (pp_print_list ~pp_sep:(fun ppf -> pp_force_newline ppf) pp_aexpr)
+        loc_part.local_body )
+    aexp.afun_annex ;
+  fprintf ppf "FunctionBody:@.  @[%a@]@." pp_aexpr aexp.afun_body ;
   pp_print_newline ppf ()
 
 let pp_aschema genv ppf schema_impl =
@@ -394,5 +437,5 @@ let pp_aschema genv ppf schema_impl =
 
 let pp_aprog ppf (aprog : aprogram) =
   pp_set_geometry ppf ~max_indent:75 ~margin:100 ;
-  Schema.Map.iter (fun _ -> pp_aschema aprog.genv ppf) aprog.aschemas ;
-  Function.Map.iter (fun _ -> pp_afun aprog.genv ppf) aprog.afuns
+  Schema.Map.iter (fun _ -> pp_aschema aprog.aprog_genv ppf) aprog.aschemas ;
+  Function.Map.iter (fun _ -> pp_afun aprog.aprog_genv ppf) aprog.afuns

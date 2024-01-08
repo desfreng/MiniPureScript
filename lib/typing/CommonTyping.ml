@@ -33,10 +33,10 @@ let rec wf_type genv lenv (t : Ast.typ) =
 let type_constant (cst : Ast.constant) =
   match cst.v with
   | True ->
-      (Constant.TBool true, bool_t)
+      (Constant.Bool true, bool_t)
   | False ->
-      (Constant.TBool false, bool_t)
+      (Constant.Bool false, bool_t)
   | Int i ->
-      (Constant.TInt i, int_t)
+      (Constant.Int i, int_t)
   | Str s ->
-      (Constant.TString s, string_t)
+      (Constant.String s, string_t)

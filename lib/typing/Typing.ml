@@ -214,7 +214,7 @@ let check_fun_equations genv lenv (fun_id, tfun_arity, ret_typ, args_typ)
   let decl_list = List.map (fun (_, _, x) -> x) fun_body in
   (* And compile it to an expression *)
   let tfun_texpr =
-    Some (compile_function genv ret_typ fargs mat_pat fun_id decl_list)
+    compile_function genv ret_typ fargs mat_pat fun_id decl_list
   in
   (* We build the fimpl structure *)
   {tfun_id= fun_id; tfun_vars; tfun_arity; tfun_texpr}
@@ -602,4 +602,4 @@ and check_fun_decl permissive genv funs_impl schemas_impl main_id decl
       assert false
 
 let check_program permissive p =
-  check_prog permissive default_genv default_fun_impl default_schema_impl None p
+  check_prog permissive default_genv Function.Map.empty Schema.Map.empty None p

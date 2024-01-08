@@ -97,19 +97,15 @@ let rec copy t =
 
 (** A constant in the Typed AST *)
 module type Constant = sig
-  type t = TUnit | TBool of bool | TInt of int | TString of string
+  type t = Unit | Bool of bool | Int of int | String of string
 
   module Map : Map.S with type key = t
 
-  module Set : Set.S with type elt = t
-
   type 'a map = 'a Map.t
-
-  type set = Set.t
 end
 
 module Constant : Constant = struct
-  type t = TUnit | TBool of bool | TInt of int | TString of string
+  type t = Unit | Bool of bool | Int of int | String of string
 
   type const = t
 
@@ -120,11 +116,8 @@ module Constant : Constant = struct
   end
 
   module Map = Map.Make (M)
-  module Set = Set.Make (M)
 
   type 'a map = 'a Map.t
-
-  type set = Set.t
 end
 
 type res_inst_kind =
@@ -136,6 +129,10 @@ type res_inst_kind =
     GlobalSchema of (Schema.t * res_inst_kind list)
 
 type resolved_inst = res_inst_kind Lazy.t
+
+module SMap = Map.Make (String)
+module SSet = Set.Make (String)
+module IMap = Map.Make (Int)
 
 (** Expression type, with every type possible. *)
 type texpr = {expr: texpr_kind; expr_typ: ttyp}
@@ -159,17 +156,32 @@ and texpr_kind =
   | TIf of texpr * texpr * texpr
   | TBlock of texpr list
   | TLet of Variable.t * texpr * texpr
-  | TConstantCase of
-      texpr (* The expression we need to compare to each constant *)
-      * texpr Constant.map
-      (* The expression to evaluate for each possible constant (of the same type) *)
-      * texpr option (* The expression to evaluate if no constants match *)
+  | TBind of Variable.t * Variable.t * texpr
+    (* bind a variable to another one on an expression (equivalent to let v = v' in e) *)
+  | TStringCase of
+      Variable.t
+      * ttyp
+      * (* The variable refering to the value we need to compare to each string *)
+      texpr SMap.t
+      (* The expression to evaluate for each possible string *)
+      * texpr
+  (* The expression to evaluate if no string match *)
+  | TIntCase of
+      Variable.t
+      * ttyp
+      * (* The variable refering to the value we need to compare to each int *)
+      texpr IMap.t
+      (* The expression to evaluate for each possible int *)
+      * texpr
+  (* The expression to evaluate if no int match *)
   | TContructorCase of
-      texpr (* The expression for which we are looking at the constructor *)
-      * texpr Constructor.map
+      Variable.t
+      * ttyp
+      * (* The variable containing the value for which we are looking at the constructor *)
+      texpr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * texpr option (* The expression to evaluate if no constructor match *)
-  | TGetField of texpr * int
+  | TGetField of Variable.t * ttyp * int
 
 (** A typed pattern, they are not used in the TAst. *)
 type tpattern = {pat: tpat_kind; pat_typ: ttyp}
@@ -199,9 +211,6 @@ type funct =
   ; fun_args: ttyp list  (** Expected type of the arguments *)
   ; fun_arity: int  (** Number of argument of the function *)
   ; fun_ret: ttyp  (** Return type of the function *) }
-
-module SMap = Map.Make (String)
-module SSet = Set.Make (String)
 
 type tclass_function =
   { tc_fun_args: ttyp list  (** Expected type of the arguments *)
@@ -241,7 +250,7 @@ type tfun =
   { tfun_id: Function.t (* id of the function implemented *)
   ; tfun_vars: Variable.t list (* argument of the function, in order *)
   ; tfun_arity: int (* number of argument *)
-  ; tfun_texpr: texpr option (* body of the function (None if builtins) *) }
+  ; tfun_texpr: texpr (* body of the function (None if builtins) *) }
 
 type tschema =
   { tschema_id: Schema.t (* id of the shema implemented *)

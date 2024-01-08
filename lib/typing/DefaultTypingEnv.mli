@@ -22,10 +22,6 @@ val default_genv : TypedAst.global_env
 
 val default_lenv : TypedAst.local_env
 
-val default_fun_impl : TypedAst.tfun Ids.Function.map
-
-val default_schema_impl : TypedAst.tschema Ids.Schema.map
-
 val not_fid : TypedAst.Function.t
 
 val mod_fid : TypedAst.Function.t

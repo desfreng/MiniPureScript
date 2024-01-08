@@ -9,8 +9,8 @@ exception NonExhaustive
 (** [get_fields genv expr cst_id] returns the list of expression corresponding
     to each field of [expr] and the list of their type in the case that [expr]
     has [cst_id] as constructor. *)
-let get_fields genv expr cst_id =
-  match unfold expr.expr_typ with
+let get_fields genv (var, var_typ) cst_id =
+  match unfold var_typ with
   | TVar _ | TQuantifiedVar _ ->
       (* If it was the case, we would not be filtering by constructors *)
       assert false
@@ -34,7 +34,7 @@ let get_fields genv expr cst_id =
         let cst_args = List.map (subst sigma) constr_args in
         (* For each field, we create the expression that retrieve its value. *)
         ( List.mapi
-            (fun index t -> {expr= TGetField (expr, index); expr_typ= t})
+            (fun index t -> {expr= TGetField (var, var_typ, index); expr_typ= t})
             cst_args
         , cst_args )
 
@@ -43,12 +43,16 @@ let get_fields genv expr cst_id =
 let constructor_mat genv m pat_cstr =
   (* [scrut] is the expression we match on (first expression of the scrutineers),
      [scrut_list] is the rest. *)
-  let scrut, scrut_list =
+  let scrut, scrut_typ, scrut_list =
     match m.scrutineers with
     | [] ->
         raise (Invalid_argument "The list of scrutineers must be non-empty.")
-    | hd :: tl ->
-        (hd, tl)
+    | hd :: tl -> (
+      match hd.expr with
+      | TVariable v ->
+          (v, hd.expr_typ, tl)
+      | _ ->
+          raise (Invalid_argument "The first scrutinee must be a variable.") )
   in
   (* [n_scrut] is the list of scrutineers of the new matrix
      [cstr_args_typ] is the type of each argument of the constructor *)
@@ -63,7 +67,7 @@ let constructor_mat genv m pat_cstr =
         (* Constructor symbol case: the next scrutineers are :
            - The fields of the the first scrutineer
            - The rest of the scrutineers *)
-        let fields, cst_typ = get_fields genv scrut cst_id in
+        let fields, cst_typ = get_fields genv (scrut, scrut_typ) cst_id in
         (fields @ scrut_list, cst_typ)
   in
   (* We build the sub matrix for this constructor *)
@@ -94,7 +98,7 @@ let constructor_mat genv m pat_cstr =
               in
               (* We bind the variable "v" to the current scrutineer in the action *)
               let new_act =
-                {expr= TLet (v, scrut, act); expr_typ= pat.pat_typ}
+                {expr= TBind (v, scrut, act); expr_typ= pat.pat_typ}
               in
               Monoid.(acc <> of_elm (new_pat_row, new_act))
           | TPatConstant c, Either.Left c' when c = c' ->
@@ -180,7 +184,7 @@ let build_other_submat genv m =
        - The only way to refer to this constant is by its 'name' : "unit".
        - But, a pattern with "unit" is interpreted as a pattern variable.
        - So no pattern constant can have the type Constant.TUnit. *)
-  constructor_mat genv m (Either.left Constant.TUnit)
+  constructor_mat genv m (Either.left Constant.Unit)
 
 let rec f genv typ m =
   if Monoid.is_empty m.pat_rows then raise NonExhaustive
@@ -189,37 +193,63 @@ let rec f genv typ m =
     | [] ->
         let _, act = Monoid.first m.pat_rows in
         act
-    | e :: _ -> (
+    | l -> (
+        (* All expression must be closed wit hthis handler. It introduces a fresh
+           variable if the pattern is not an expression. *)
+        let v, v_typ, m, close =
+          let e, tl = match l with e :: tl -> (e, tl) | _ -> assert false in
+          match e.expr with
+          | TVariable v ->
+              (v, e.expr_typ, m, Fun.id)
+          | _ ->
+              (* e is not a variable. We first bind e to a fresh variable and
+                 replace it in the scrutineers list with the freshly introduced
+                 variable. *)
+              let v = Variable.fresh "" in
+              let m =
+                { m with
+                  scrutineers= {expr= TVariable v; expr_typ= e.expr_typ} :: tl
+                }
+              in
+              let close next_expr =
+                {expr= TLet (v, e, next_expr); expr_typ= next_expr.expr_typ}
+              in
+              (v, e.expr_typ, m, close)
+        in
         let constr_mat = build_submat genv m in
         let otherwise_mat = build_other_submat genv m in
         match constr_mat with
         | None ->
             (* We have not constructed any "specialized" pattern matrix,
                So we continue the pattern matching on the otherwise case *)
-            f genv typ otherwise_mat
+            close (f genv typ otherwise_mat)
         | Some (Either.Left constant_map) ->
             let branch_expr = Constant.Map.map (f genv typ) constant_map in
-            if is_bool_t e.expr_typ then
+            if is_bool_t v_typ then
               (* We replace the pattern matching with a if *)
+              let cond_expr = {expr= TVariable v; expr_typ= v_typ} in
               if Constant.Map.cardinal constant_map = 2 then
                 (* We do not need the otherwise branch, true and false are present
                    in the pattern matching. *)
-                let true_expr = Constant.(Map.find (TBool true) branch_expr) in
-                let false_expr =
-                  Constant.(Map.find (TBool false) branch_expr)
-                in
-                {expr= TIf (e, true_expr, false_expr); expr_typ= typ}
+                let true_expr = Constant.(Map.find (Bool true) branch_expr) in
+                let false_expr = Constant.(Map.find (Bool false) branch_expr) in
+                close
+                  {expr= TIf (cond_expr, true_expr, false_expr); expr_typ= typ}
               else
                 (* We will need the otherwise branch. *)
                 let otherwise_expr = f genv typ otherwise_mat in
                 (* [branch_expr] cannot be empty, so its cardinal is one ! *)
                 match Constant.Map.bindings branch_expr with
-                | [(Constant.TBool true, true_expr)] ->
+                | [(Constant.Bool true, true_expr)] ->
                     (* We only match on "True" here. *)
-                    {expr= TIf (e, true_expr, otherwise_expr); expr_typ= typ}
-                | [(Constant.TBool false, false_expr)] ->
+                    close
+                      { expr= TIf (cond_expr, true_expr, otherwise_expr)
+                      ; expr_typ= typ }
+                | [(Constant.Bool false, false_expr)] ->
                     (* We only match on "False" here. *)
-                    {expr= TIf (e, otherwise_expr, false_expr); expr_typ= typ}
+                    close
+                      { expr= TIf (cond_expr, otherwise_expr, false_expr)
+                      ; expr_typ= typ }
                 | _ ->
                     (* All the other case cannot are impossible because:
                        - [branch_expr] cannot be empty because then we would have
@@ -235,12 +265,42 @@ let rec f genv typ m =
               (* This is a pattern matching on a type with uncountable value,
                  we cannot discard the otherwise branch. *)
               let otherwise_expr = f genv typ otherwise_mat in
-              { expr= TConstantCase (e, branch_expr, Some otherwise_expr)
-              ; expr_typ= typ }
+              if is_int_t v_typ then
+                let branch_expr =
+                  Constant.Map.fold
+                    (fun cst branch acc ->
+                      match cst with
+                      | Int i ->
+                          IMap.add i branch acc
+                      | _ ->
+                          assert false )
+                    branch_expr IMap.empty
+                in
+                close
+                  { expr= TIntCase (v, v_typ, branch_expr, otherwise_expr)
+                  ; expr_typ= typ }
+              else if is_string_t v_typ then
+                let branch_expr =
+                  Constant.Map.fold
+                    (fun cst branch acc ->
+                      match cst with
+                      | String s ->
+                          SMap.add s branch acc
+                      | _ ->
+                          assert false )
+                    branch_expr SMap.empty
+                in
+                close
+                  { expr= TStringCase (v, v_typ, branch_expr, otherwise_expr)
+                  ; expr_typ= typ }
+              else
+                (* We cannot have a pattern matching with constant that
+                   are not String or Int at this point. *)
+                assert false
         | Some (Either.Right constr_map) ->
             let branch_expr = Constructor.Map.map (f genv typ) constr_map in
             let otherwise_ignored =
-              let constr_set = constructors_of_symbol genv e.expr_typ in
+              let constr_set = constructors_of_symbol genv v_typ in
               (* [constr_set] is not empty ! So we discard the otherwise branch if
                  all constructors appear in the constructor to pattern matrix
                  mapping. *)
@@ -248,11 +308,15 @@ let rec f genv typ m =
                 constr_set
             in
             if otherwise_ignored then
-              {expr= TContructorCase (e, branch_expr, None); expr_typ= typ}
+              close
+                { expr= TContructorCase (v, v_typ, branch_expr, None)
+                ; expr_typ= typ }
             else
               let otherwise_expr = f genv typ otherwise_mat in
-              { expr= TContructorCase (e, branch_expr, Some otherwise_expr)
-              ; expr_typ= typ } )
+              close
+                { expr=
+                    TContructorCase (v, v_typ, branch_expr, Some otherwise_expr)
+                ; expr_typ= typ } )
 
 (** [compile_case genv typ e pats actions] compiles the case statement over [e]
       with pattern [pats] and actions [actions] of type [typ] to an expression. *)
@@ -262,21 +326,7 @@ let compile_case genv typ e pats actions pos =
       (fun acc p act -> Monoid.(acc <> of_elm ([p], act)))
       Monoid.empty pats actions
   in
-  try
-    (* We replace :
-       match ... with
-       | -> ...
-
-       by
-       let scrut_pat_var = ... in
-       match scrut_pat_var with
-       | -> ...
-
-       All excessive bindings will be removed during the allocation phase. *)
-    let v = Variable.fresh "scrut_pat_var" in
-    let scrut_expr = {expr= TVariable v; expr_typ= e.expr_typ} in
-    let case_expr = f genv typ {scrutineers= [scrut_expr]; pat_rows= x} in
-    {expr= TLet (v, e, case_expr); expr_typ= typ}
+  try f genv typ {scrutineers= [e]; pat_rows= x}
   with NonExhaustive -> TypingError.not_exhaustive_case pos
 
 (** [compile_function genv typ e pats actions] compiles the case statement over [e]

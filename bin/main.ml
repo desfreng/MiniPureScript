@@ -64,7 +64,8 @@ let () =
         let tprog = Typing.check_program !permissive_decl prog in
         if !type_only then exit 0
         else
-          let aprog = Allocation.allocate_tprogram tprog in
+          let sprog = Simplify.simplify_program tprog in
+          let aprog = Allocation.allocate_tprogram 8 sprog in
           PP.pp_aprog Format.std_formatter aprog
     with
     | Lexer.LexingError (terr, pos)
