@@ -65,8 +65,7 @@ let mk_fun_call typ fid instl args =
         (* Wrongly typed mod function => Impossible *)
         assert false )
   | _ ->
-      let close, vargs = introduce_let typ args in
-      close (mk_sexpr typ (SFunctionCall (fid, instl, vargs)))
+      mk_sexpr typ (SFunctionCall (fid, instl, args))
 
 let mk_inst_call typ inst fid args =
   match fid with
@@ -79,18 +78,14 @@ let mk_inst_call typ inst fid args =
       | SConstant (Int i) ->
           mk_const typ (String (string_of_int i))
       | _ ->
-          let close, vargs = introduce_let typ args in
-          close (mk_sexpr typ (SInstanceCall (inst, fid, vargs))) )
+          mk_sexpr typ (SInstanceCall (inst, fid, args)) )
     | _ ->
         (* Wrongly typed show function => Impossible *)
         assert false )
   | _ ->
-      let close, vargs = introduce_let typ args in
-      close (mk_sexpr typ (SInstanceCall (inst, fid, vargs)))
+      mk_sexpr typ (SInstanceCall (inst, fid, args))
 
-let mk_constr typ cid args =
-  let close, vargs = introduce_let typ args in
-  close (mk_sexpr typ (SConstructor (cid, vargs)))
+let mk_constr typ cid args = mk_sexpr typ (SConstructor (cid, args))
 
 let rec simplify_expr sigma e =
   let expr, typ = (e.expr, e.expr_typ) in

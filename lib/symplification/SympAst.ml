@@ -22,15 +22,13 @@ and symp_expr_kind =
   | SFunctionCall of
       Function.t (* the function id *)
       * resolved_instance list (* the list of instances needed *)
-      * (Variable.t, Constant.t) Either.t list (* the list of arguments *)
+      * symp_expr list (* the list of arguments *)
   | SInstanceCall of
       resolved_instance
       (* the instance in which the function called is defined *)
       * Function.t (* the function id *)
-      * (Variable.t, Constant.t) Either.t list (* the list of arguments *)
-  | SConstructor of
-      Constructor.t
-      * (Variable.t, Constant.t) Either.t list (* Constructor application *)
+      * symp_expr list (* the list of arguments *)
+  | SConstructor of Constructor.t * symp_expr list (* Constructor application *)
   | SIf of symp_expr * symp_expr * symp_expr (* A conditional branchment *)
   | SBlock of symp_expr list (* A block of effect *)
   | SLet of Variable.t * symp_expr * symp_expr (* Definition of a variable *)

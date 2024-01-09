@@ -2,9 +2,9 @@ include X86_64
 include AllocAst
 
 type env =
-  { exit_label: label
-  ; log_label: label
-  ; alloc_label: label
+  { schema_lbl: label Schema.map
+  ; schema_alloc: aschema Schema.map
+  ; funs_lbl: label Function.map
   ; stack_pos: int
   ; word_size: int
   ; is_aligned: int -> bool }
@@ -31,6 +31,21 @@ let load_var lenv (t, d) var_loc dest =
       (t ++ movq (ind ~ofs:i rbp) dest, d, lenv)
   | AClosVar i ->
       (t ++ movq (ind ~ofs:i rsi) dest, d, lenv)
+
+(** [load_inst lenv asm inst_loc dest] : load the instance at [inst_loc] in [dest]. *)
+let load_inst lenv (t, d) inst_loc dest =
+  match inst_loc with
+  | AStackInst i ->
+      (t ++ movq (ind ~ofs:i rbp) !%dest, d, lenv)
+  | AClosInst i ->
+      (t ++ movq (ind ~ofs:i rsi) !%dest, d, lenv)
+  | AInstInst (i, j) ->
+      (* AInstInst (i, j) ~= j(i(%rbp)) So we do :
+         movq i(%rbp) dest
+         movq j(dest) dest *)
+      ( t ++ movq (ind ~ofs:i rbp) !%dest ++ movq (ind ~ofs:j dest) !%dest
+      , d
+      , lenv )
 
 let compile_get_field lenv (t, d) v_pos index =
   (*
@@ -64,6 +79,11 @@ let pushq lenv t r =
 
 let popq lenv t r =
   (t ++ popq r, {lenv with stack_pos= lenv.stack_pos + lenv.word_size})
+
+let popqn lenv t nb_word =
+  let stack_offset = nb_word * lenv.word_size in
+  ( t ++ addq (imm stack_offset) !%rsp
+  , {lenv with stack_pos= lenv.stack_pos + stack_offset} )
 
 (** Perform a call to [malloc], put the result in %rax.
     The following registers are untouched : %rbx, %rbp, %r12, %r13, %r14 & %r15 *)

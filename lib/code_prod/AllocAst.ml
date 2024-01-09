@@ -27,14 +27,10 @@ type inst_pos =
      - At the end, pointers to the required instances
 *)
 
-(* A value already computed at runtime or known at compile time. *)
-type direct_value = FromMemory of var_pos | FromConstant of Constant.t
-
-(*  *)
 type alloc_inst =
   | ALocalInst of inst_pos
   | AGlobalInst of Schema.t
-  | AGlobalSchema of (Schema.t * alloc_inst list)
+  | AGlobalSchema of (Schema.t * alloc_inst list * int)
 
 type alloc_expr = {alloc_expr: alloc_expr_kind; alloc_expr_typ: ttyp}
 
@@ -52,14 +48,14 @@ and alloc_expr_kind =
     AFunctionCall of
       Function.t (* the function id *)
       * alloc_inst list (* the list of instances needed *)
-      * direct_value list (* the list of argument *)
+      * alloc_expr list (* the list of argument *)
   | (* Type-Class Function application *)
     AInstanceCall of
       alloc_inst (* the instance in which the function called is defined *)
       * Function.t (* the function id *)
-      * direct_value list (* the list of argument *)
+      * alloc_expr list (* the list of argument *)
   | AConstructor of
-      Constructor.t * direct_value list (* Constructor application *)
+      Constructor.t * alloc_expr list (* Constructor application *)
   | AIf of alloc_expr * alloc_expr * alloc_expr (* A conditional branchment *)
   | ALocalClosure of label * inst_pos list * var_pos list * int
   | ADoEffect of alloc_expr
@@ -110,6 +106,7 @@ type aprogram =
   { afuns: afun Function.map
         (* maps each "normal" function definition to its implementation *)
   ; afuns_labels: label Function.map (* maps function to its label *)
+  ; aschema_labels: label Schema.map (* maps schema to its label *)
   ; aschemas: aschema Schema.map (* maps each schema to its implementation *)
   ; aprog_genv: global_env (* The resulting typing environment. *)
   ; aprog_main: Function.t (* id of the program entry point. *) }

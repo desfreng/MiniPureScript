@@ -22,7 +22,19 @@ module LabelMap = Map.Make (String)
 let local_lbl fid =
   Ids.Function.name fid ^ "_do_block" |> fresh_lbl ~atomic:false
 
-let function_lbl fid = Ids.Function.name fid |> fresh_lbl ~atomic:true
+let function_lbl fid schema_prefix =
+  let fname =
+    match schema_prefix with
+    | Some prefix ->
+        Format.sprintf "%s_%s" prefix (Ids.Function.name fid)
+    | None ->
+        Ids.Function.name fid
+  in
+  fresh_lbl ~atomic:true fname
+
+let schema_lbl sid =
+  "schema_" ^ string_of_int (Ids.Schema.unique_int sid)
+  |> fresh_lbl ~atomic:true
 
 let string_lbl () = fresh_lbl ~atomic:false "string"
 

@@ -128,7 +128,7 @@ let rec pp_res_inst ppf = function
       fprintf ppf "(Instance Argument %a)" Instance.pp i
   | TGlobalInstance s ->
       fprintf ppf "(Instance %a)" Schema.pp s
-  | TGlobalSchema (s, args) ->
+  | TGlobalSchema (s, args, _) ->
       fprintf ppf "@[<hv 2>(Schema %a" Schema.pp s ;
       List.iter (fprintf ppf "@;%a" pp_res_inst) args ;
       fprintf ppf ")@]"
@@ -310,12 +310,6 @@ let pp_compare_op ppf = function
   | SympAst.LowerEqual ->
       pp_print_string ppf "<="
 
-let pp_direct_value ppf = function
-  | FromConstant c ->
-      pp_cst ppf c
-  | FromMemory v_pos ->
-      pp_var_pos ppf v_pos
-
 let pp_inst_pos ppf = function
   | AStackInst i ->
       fprintf ppf "%i(%%rbp)" i
@@ -329,7 +323,7 @@ let rec pp_alloc_inst ppf = function
       pp_inst_pos ppf i
   | AGlobalInst s ->
       Schema.pp ppf s
-  | AGlobalSchema (s, args) ->
+  | AGlobalSchema (s, args, _) ->
       fprintf ppf "(@[%a@;with%a@])" Schema.pp s
         (pp_print_list pp_alloc_inst)
         args
@@ -358,21 +352,17 @@ let rec pp_aexpr ppf aexpr =
   | AFunctionCall (f, insts, args) ->
       fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
         (pp_print_list pp_alloc_inst)
-        insts
-        (pp_print_list pp_direct_value)
-        args
+        insts (pp_print_list pp_aexpr) args
   | AInstanceCall (i, f, args) ->
       fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_alloc_inst i Function.pp f
-        (pp_print_list pp_direct_value)
-        args
+        (pp_print_list pp_aexpr) args
   | AConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
         fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
-          (pp_print_list pp_direct_value)
-          args )
+          (pp_print_list pp_aexpr) args )
   | AIf (cd, tb, fb) ->
       fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_aexpr cd pp_aexpr
         tb pp_aexpr fb
@@ -448,12 +438,6 @@ let pp_aprog ppf (aprog : aprogram) =
   Schema.Map.iter (fun _ -> pp_aschema aprog.aprog_genv ppf) aprog.aschemas ;
   Function.Map.iter (fun _ -> pp_afun aprog.aprog_genv ppf) aprog.afuns
 
-let pp_symp_args ppf = function
-  | Either.Left v ->
-      Variable.pp ppf v
-  | Either.Right cst ->
-      pp_cst ppf cst
-
 let rec pp_sexpr ppf sexpr =
   match sexpr.symp_expr with
   | SConstant c ->
@@ -478,21 +462,17 @@ let rec pp_sexpr ppf sexpr =
   | SFunctionCall (f, insts, args) ->
       fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
         (pp_print_list pp_res_inst)
-        insts
-        (pp_print_list pp_symp_args)
-        args
+        insts (pp_print_list pp_sexpr) args
   | SInstanceCall (i, f, args) ->
       fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_res_inst i Function.pp f
-        (pp_print_list pp_symp_args)
-        args
+        (pp_print_list pp_sexpr) args
   | SConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
         fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
-          (pp_print_list pp_symp_args)
-          args )
+          (pp_print_list pp_sexpr) args )
   | SIf (cd, tb, fb) ->
       fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_sexpr cd pp_sexpr
         tb pp_sexpr fb

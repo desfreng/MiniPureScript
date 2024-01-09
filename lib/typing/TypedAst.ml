@@ -126,7 +126,7 @@ type resolved_instance =
   | (* This refers an instance defined in the global environment. *)
     TGlobalInstance of Schema.t
   | (* This refers a schema instancied with the following instance arguments. *)
-    TGlobalSchema of (Schema.t * resolved_instance list)
+    TGlobalSchema of (Schema.t * resolved_instance list * int)
 
 module SMap = Map.Make (String)
 module SSet = Set.Make (String)

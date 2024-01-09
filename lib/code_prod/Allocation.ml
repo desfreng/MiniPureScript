@@ -7,7 +7,7 @@ let rec local_inst = function
       Instance.Set.singleton i
   | TGlobalInstance _ ->
       Instance.Set.empty
-  | TGlobalSchema (_, l) ->
+  | TGlobalSchema (_, l, _) ->
       List.fold_left
         (fun li i -> Instance.Set.union li (local_inst i))
         Instance.Set.empty l
@@ -30,39 +30,34 @@ let rec fv_and_li e =
       let rhs_fv, rhs_ui = fv_and_li rhs in
       (Variable.Set.union lhs_fv rhs_fv, Instance.Set.union lhs_ui rhs_ui)
   | SFunctionCall (_, i, l) ->
-      let fv =
+      let fv, li =
         List.fold_left
-          (fun acc -> function
-            | Either.Left v ->
-                Variable.Set.add v acc
-            | Either.Right _ ->
-                acc )
-          Variable.Set.empty l
+          (fun (fv, li) arg ->
+            let fv_arg, li_arg = fv_and_li arg in
+            (Variable.Set.union fv fv_arg, Instance.Set.union li li_arg) )
+          (Variable.Set.empty, Instance.Set.empty)
+          l
       in
       ( fv
-      , List.fold_left
-          (fun li i -> Instance.Set.union li (local_inst i))
-          Instance.Set.empty i )
+      , List.fold_left (fun li i -> Instance.Set.union li (local_inst i)) li i
+      )
   | SInstanceCall (i, _, l) ->
-      let fv =
+      let fv, li =
         List.fold_left
-          (fun acc -> function
-            | Either.Left v ->
-                Variable.Set.add v acc
-            | Either.Right _ ->
-                acc )
-          Variable.Set.empty l
+          (fun (fv, li) arg ->
+            let fv_arg, li_arg = fv_and_li arg in
+            (Variable.Set.union fv fv_arg, Instance.Set.union li li_arg) )
+          (Variable.Set.empty, Instance.Set.empty)
+          l
       in
-      (fv, local_inst i)
+      (fv, Instance.Set.union li (local_inst i))
   | SConstructor (_, l) ->
-      ( List.fold_left
-          (fun acc -> function
-            | Either.Left v ->
-                Variable.Set.add v acc
-            | Either.Right _ ->
-                acc )
-          Variable.Set.empty l
-      , Instance.Set.empty )
+      List.fold_left
+        (fun (fv, li) arg ->
+          let fv_arg, li_arg = fv_and_li arg in
+          (Variable.Set.union fv fv_arg, Instance.Set.union li li_arg) )
+        (Variable.Set.empty, Instance.Set.empty)
+        l
   | SBlock l ->
       List.fold_left
         (fun (fv, ui) e ->
@@ -148,16 +143,10 @@ let rec alloc_inst aenv = function
       ALocalInst (Hashtbl.find aenv.inst_pos i)
   | TGlobalInstance s ->
       AGlobalInst s
-  | TGlobalSchema (s, args) ->
-      AGlobalSchema (s, List.map (alloc_inst aenv) args)
+  | TGlobalSchema (s, args, i) ->
+      AGlobalSchema (s, List.map (alloc_inst aenv) args, i)
 
 let mk_aexpr typ ae = {alloc_expr= ae; alloc_expr_typ= typ}
-
-let get_pos aenv = function
-  | Either.Left v ->
-      FromMemory (Hashtbl.find aenv.var_pos v)
-  | Either.Right cst ->
-      FromConstant cst
 
 let rec allocate_expr aenv fp_cur e =
   let sexpr, typ = (e.symp_expr, e.symp_expr_typ) in
@@ -189,17 +178,35 @@ let rec allocate_expr aenv fp_cur e =
       let alhs, fp_max_1 = allocate_expr aenv fp_cur lhs in
       let arhs, fp_max_2 = allocate_expr aenv fp_cur rhs in
       (mk_aexpr typ (AStringConcat (alhs, arhs)), max fp_max_1 fp_max_2)
-  | SFunctionCall (fid, instl, vargs) ->
-      let vargs_pos = List.map (get_pos aenv) vargs in
+  | SFunctionCall (fid, instl, args) ->
+      let fp_max, aargs =
+        List.fold_left_map
+          (fun fp_max arg ->
+            let aarg, fp_max_1 = allocate_expr aenv fp_cur arg in
+            (max fp_max fp_max_1, aarg) )
+          fp_cur args
+      in
       let ainstl = List.map (alloc_inst aenv) instl in
-      (mk_aexpr typ (AFunctionCall (fid, ainstl, vargs_pos)), fp_cur)
-  | SInstanceCall (inst, fid, vargs) ->
-      let vargs_pos = List.map (get_pos aenv) vargs in
+      (mk_aexpr typ (AFunctionCall (fid, ainstl, aargs)), fp_max)
+  | SInstanceCall (inst, fid, args) ->
+      let fp_max, aargs =
+        List.fold_left_map
+          (fun fp_max arg ->
+            let aarg, fp_max_1 = allocate_expr aenv fp_cur arg in
+            (max fp_max fp_max_1, aarg) )
+          fp_cur args
+      in
       let ainst = alloc_inst aenv inst in
-      (mk_aexpr typ (AInstanceCall (ainst, fid, vargs_pos)), fp_cur)
-  | SConstructor (cid, vargs) ->
-      let vargs_pos = List.map (get_pos aenv) vargs in
-      (mk_aexpr typ (AConstructor (cid, vargs_pos)), fp_cur)
+      (mk_aexpr typ (AInstanceCall (ainst, fid, aargs)), fp_max)
+  | SConstructor (cid, args) ->
+      let fp_max, aargs =
+        List.fold_left_map
+          (fun fp_max arg ->
+            let aarg, fp_max_1 = allocate_expr aenv fp_cur arg in
+            (max fp_max fp_max_1, aarg) )
+          fp_cur args
+      in
+      (mk_aexpr typ (AConstructor (cid, aargs)), fp_max)
   | SIf (cond, tb, fb) ->
       let acond, fp_max_1 = allocate_expr aenv fp_cur cond in
       let atb, fp_max_2 = allocate_expr aenv fp_cur tb in
@@ -323,7 +330,7 @@ let rec allocate_expr aenv fp_cur e =
       let v_pos = Hashtbl.find aenv.var_pos v in
       (mk_aexpr typ (AGetField (v_pos, index)), fp_cur)
 
-let allocate_fun word_size sfun schema_insts =
+let allocate_fun word_size sfun schema_data =
   let aenv =
     { var_pos= Hashtbl.create 17
     ; word_size
@@ -346,7 +353,7 @@ let allocate_fun word_size sfun schema_insts =
       2 sfun.sfun_vars
   in
   let _ =
-    match schema_insts with
+    match schema_data with
     | None ->
         (* This is a "regular" function, its required instances are passed as argument. *)
         (* We do the same for the instances required by f. *)
@@ -355,7 +362,7 @@ let allocate_fun word_size sfun schema_insts =
             Hashtbl.add aenv.inst_pos i (AStackInst (index * word_size)) ;
             index + 1 )
           index sfun.sfun_insts
-    | Some l ->
+    | Some (_, l) ->
         (* This is a function defined inside of an instance. If this instance
            has any instance requirements, they are NOT passed as argument, but
            added at the end of the instance we are defined in (an instance is
@@ -369,7 +376,7 @@ let allocate_fun word_size sfun schema_insts =
   in
   let afun_body, afun_stack_reserved = allocate_expr aenv 0 sfun.sfun_body in
   let annex_parts = Hashtbl.to_seq aenv.new_local_blocks in
-  let fun_label = function_lbl sfun.sfun_id in
+  let fun_label = function_lbl sfun.sfun_id (Option.map fst schema_data) in
   ( { afun_id= sfun.sfun_id
     ; afun_arity= sfun.sfun_arity
     ; afun_body
@@ -378,6 +385,7 @@ let allocate_fun word_size sfun schema_insts =
   , fun_label )
 
 let allocate_schema word_size (sshema : sschema) =
+  let schema_label = schema_lbl sshema.sschema_id in
   let req_inst_pos =
     List.mapi
       (fun index inst -> (inst, (index + sshema.sschema_nb_funs) * word_size))
@@ -388,15 +396,22 @@ let allocate_schema word_size (sshema : sschema) =
       fold
         (fun fid sfun (afuns, afun_labels) ->
           let afun, fun_label =
-            allocate_fun word_size sfun (Some req_inst_pos)
+            allocate_fun word_size sfun (Some (schema_label, req_inst_pos))
           in
           (add fid afun afuns, add fid fun_label afun_labels) )
         sshema.sschema_funs (empty, empty) )
   in
-  {aschema_id= sshema.sschema_id; aschema_funs; aschema_label}
+  ({aschema_id= sshema.sschema_id; aschema_funs; aschema_label}, schema_label)
 
 let allocate_tprogram word_size (p : sprogram) =
-  let aschemas = Schema.Map.map (allocate_schema word_size) p.sschemas in
+  let aschemas, aschema_labels =
+    Schema.Map.(
+      fold
+        (fun sid sshema (aschemas, ashema_labels) ->
+          let aschema, ashema_label = allocate_schema word_size sshema in
+          (add sid aschema aschemas, add sid ashema_label ashema_labels) )
+        p.sschemas (empty, empty) )
+  in
   let afuns, afuns_labels =
     Function.Map.(
       fold
@@ -407,6 +422,7 @@ let allocate_tprogram word_size (p : sprogram) =
   in
   { afuns
   ; aschemas
+  ; aschema_labels
   ; aprog_genv= p.sprog_genv
   ; afuns_labels
   ; aprog_main= p.sprog_main }

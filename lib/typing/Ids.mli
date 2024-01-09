@@ -176,6 +176,8 @@ module Schema : sig
 
   val pp : Format.formatter -> t -> unit
 
+  val unique_int : t -> int
+
   module Map : Map.S with type key = t
 
   module Set : Set.S with type elt = t

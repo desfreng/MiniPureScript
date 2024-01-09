@@ -74,8 +74,12 @@ let rec resolve_global_inst genv lenv (to_res_cls, to_res_args) =
               in
               try
                 (* we try to resolve the required instances *)
-                let args = List.map (resolve_inst genv lenv) req_inst in
-                raise (Resolved (TGlobalSchema (sdecl.schema_id, args)))
+                let arity, args =
+                  List.fold_left_map
+                    (fun index inst -> (index + 1, resolve_inst genv lenv inst))
+                    0 req_inst
+                in
+                raise (Resolved (TGlobalSchema (sdecl.schema_id, args, arity)))
               with UnresolvedInstance (i, acc) ->
                 raise (UnresolvedInstance (i, (prod_class, prod_args) :: acc))
           )

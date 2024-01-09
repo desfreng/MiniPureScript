@@ -206,6 +206,8 @@ module TypeClassBindedId (_ : sig end) = struct
 
   let typeclass t = Hashtbl.find schema_2_typeclass t
 
+  let unique_int (e : t) = e
+
   module Map = IMap
   module Set = ISet
 
