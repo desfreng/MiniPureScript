@@ -258,7 +258,7 @@ let pp_tschema genv ppf schema_impl =
       (fun sdecl -> sdecl.schema_id = schema_impl.tschema_id)
       (TypeClass.Map.find
          (Schema.typeclass schema_impl.tschema_id)
-         genv.schemas )
+         genv.tc2schemas )
   in
   fprintf ppf "Schema %a (%a):@." Schema.pp schema_impl.tschema_id pp_schema
     sdecl ;
@@ -276,7 +276,7 @@ let pp_var_pos ppf = function
   | AStackVar i ->
       fprintf ppf "%i(%%rbp)" i
   | AClosVar i ->
-      fprintf ppf "%i(%%rsi)" i
+      fprintf ppf "%i(%%r12)" i
 
 let pp_arith_op ppf = function
   | SympAst.Add ->
@@ -314,7 +314,7 @@ let pp_inst_pos ppf = function
   | AStackInst i ->
       fprintf ppf "%i(%%rbp)" i
   | AClosInst i ->
-      fprintf ppf "%i(%%rsi)" i
+      fprintf ppf "%i(%%r12)" i
   | AInstInst (i, j) ->
       fprintf ppf "address %i of %i(%%rbp)" j i
 
@@ -366,7 +366,7 @@ let rec pp_aexpr ppf aexpr =
   | AIf (cd, tb, fb) ->
       fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_aexpr cd pp_aexpr
         tb pp_aexpr fb
-  | ALocalClosure (l, instl, vars, _) ->
+  | ALocalClosure (l, vars, instl, _) ->
       fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;%a@;and@;%a)@]" Label.pp l
         (pp_print_list pp_inst_pos)
         instl (pp_print_list pp_var_pos) vars
@@ -375,13 +375,20 @@ let rec pp_aexpr ppf aexpr =
   | ALet (v_pos, b, e) ->
       fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%i(%%rbp) = %a)@]@;in %a)@]" v_pos
         pp_aexpr b pp_aexpr e
-  | ACompareAndBranch d ->
+  | AStringCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %a@;\
+        "@[<hv 2>(compare@ %a@ with@ %s@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" pp_var_pos d.lhs pp_cst d.rhs pp_aexpr d.lower
-        pp_aexpr d.equal pp_aexpr d.greater
+         @[equal@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
+        d.equal pp_aexpr d.greater
+  | AIntCompareAndBranch d ->
+      fprintf ppf
+        "@[<hv 2>(compare@ %a@ with@ %i@;\
+         @[lower@ %a@]@;\
+         @[equal@ %a@]@;\
+         @[equal@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
+        d.equal pp_aexpr d.greater
   | AContructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," pp_var_pos e ;
       Constructor.Map.iter
@@ -424,7 +431,7 @@ let pp_aschema genv ppf schema_impl =
       (fun sdecl -> sdecl.schema_id = schema_impl.aschema_id)
       (TypeClass.Map.find
          (Schema.typeclass schema_impl.aschema_id)
-         genv.schemas )
+         genv.tc2schemas )
   in
   fprintf ppf "Schema %a (%a):@." Schema.pp schema_impl.aschema_id pp_schema
     sdecl ;
@@ -481,13 +488,20 @@ let rec pp_sexpr ppf sexpr =
   | SLet (v, b, e) ->
       fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
         pp_sexpr b pp_sexpr e
-  | SCompareAndBranch d ->
+  | SStringCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %a@;\
+        "@[<hv 2>(compare@ %a@ with@ %s@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" Variable.pp d.lhs pp_cst d.rhs pp_sexpr d.lower
-        pp_sexpr d.equal pp_sexpr d.greater
+         @[equal@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
+        d.equal pp_sexpr d.greater
+  | SIntCompareAndBranch d ->
+      fprintf ppf
+        "@[<hv 2>(compare@ %a@ with@ %i@;\
+         @[lower@ %a@]@;\
+         @[equal@ %a@]@;\
+         @[equal@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
+        d.equal pp_sexpr d.greater
   | SContructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp e ;
       Constructor.Map.iter
@@ -523,7 +537,7 @@ let pp_sschema genv ppf sschema =
   let sdecl =
     List.find
       (fun sdecl -> sdecl.schema_id = sschema.sschema_id)
-      (TypeClass.Map.find (Schema.typeclass sschema.sschema_id) genv.schemas)
+      (TypeClass.Map.find (Schema.typeclass sschema.sschema_id) genv.tc2schemas)
   in
   fprintf ppf "Schema %a (%a):@." Schema.pp sschema.sschema_id pp_schema sdecl ;
   Function.Map.iter (fun fn e -> pp_sfun genv ppf (fn, e)) sschema.sschema_funs ;

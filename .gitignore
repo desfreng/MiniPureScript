@@ -355,3 +355,4 @@ TSWLatexianTemp*
 **/*.dhall
 .purs-repl
 !test-files/**/*.out
+*.s

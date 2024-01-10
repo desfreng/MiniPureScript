@@ -14,4 +14,6 @@ val string_lbl : unit -> label
 
 val code_lbl : unit -> label
 
+val jmp_lbl : unit -> label
+
 val with_prefix : string -> label

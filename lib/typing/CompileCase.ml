@@ -174,7 +174,7 @@ let constructors_of_symbol genv typ =
   match unfold typ with
   | TSymbol (sid, _) ->
       let sdecl = Symbol.Map.find sid genv.symbols in
-      sdecl.symbol_constr
+      (sid, sdecl.symbol_constr)
   | _ ->
       raise
         (Invalid_argument
@@ -311,8 +311,8 @@ let rec f genv typ m =
                 assert false
         | Some (Either.Right constr_map) ->
             let branch_expr = Constructor.Map.map (f genv typ) constr_map in
+            let symb, constr_set = constructors_of_symbol genv v_typ in
             let otherwise_ignored =
-              let constr_set = constructors_of_symbol genv v_typ in
               (* [constr_set] is not empty ! So we discard the otherwise branch if
                  all constructors appear in the constructor to pattern matrix
                  mapping. *)
@@ -321,13 +321,13 @@ let rec f genv typ m =
             in
             if otherwise_ignored then
               close
-                { expr= TContructorCase (v, v_typ, branch_expr, None)
+                { expr= TContructorCase (v, symb, branch_expr, None)
                 ; expr_typ= typ }
             else
               let otherwise_expr = f genv typ otherwise_mat in
               close
                 { expr=
-                    TContructorCase (v, v_typ, branch_expr, Some otherwise_expr)
+                    TContructorCase (v, symb, branch_expr, Some otherwise_expr)
                 ; expr_typ= typ } )
 
 (** [compile_case genv typ e pats actions] compiles the case statement over [e]

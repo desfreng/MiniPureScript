@@ -175,7 +175,7 @@ and texpr_kind =
   (* The expression to evaluate if no int match *)
   | TContructorCase of
       Variable.t
-      * ttyp
+      * Symbol.t
       * (* The variable containing the value for which we are looking at the constructor *)
       texpr Constructor.map
       (* The expression to evaluate for each possible constructor *)
@@ -238,11 +238,11 @@ type global_env =
   ; funs: (funct, TypeClass.t) Either.t Function.map
         (** Maps each function to its declaration: as a function or in a type class. *)
   ; tclass: tclass TypeClass.map  (** Maps each class name to its declaration *)
-  ; schemas: schema list TypeClass.map
+  ; tc2schemas: schema list TypeClass.map
         (** Maps each class with the list of declared schemas which can
           produce an instance of this class.
           Instance with no requirement are considered as a schema. *)
-  }
+  ; schemas: schema Schema.map (* Maps each schema to its declaration *) }
 
 (** Describe the implementation of a function *)
 type tfun =

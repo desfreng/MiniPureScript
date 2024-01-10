@@ -97,7 +97,7 @@ let mk_string_case typ var var_typ branches other =
             let equal = SMap.find s branches in
             let greater = build r in
             mk_sexpr typ
-              (SCompareAndBranch {lhs= v; rhs= String s; lower; equal; greater})
+              (SStringCompareAndBranch {var= v; cst= s; lower; equal; greater})
       in
       build avl
   | Either.Right (Constant.String cst) -> (
@@ -115,23 +115,23 @@ let mk_int_case typ var var_typ branches other =
       let rec build = function
         | IntAVL.Empty ->
             other
-        | Node (Empty, s, Empty, _) ->
+        | Node (Empty, i, Empty, _) ->
             (* This is compiled as a if :
-               if v = s then branches[s] else other *)
+               if v = i then branches[i] else other *)
             let cond =
               mk_eq bool_t
                 (mk_sexpr var_typ (SVariable v))
-                (mk_const string_t (Int s))
+                (mk_const string_t (Int i))
             in
-            let s_act = IMap.find s branches in
+            let s_act = IMap.find i branches in
             mk_if typ cond s_act other
-        | Node (l, s, r, _) ->
+        | Node (l, i, r, _) ->
             (* This is compiled with a CompareAndBranch construction. *)
             let lower = build l in
-            let equal = IMap.find s branches in
+            let equal = IMap.find i branches in
             let greater = build r in
             mk_sexpr typ
-              (SCompareAndBranch {lhs= v; rhs= Int s; lower; equal; greater})
+              (SIntCompareAndBranch {var= v; cst= i; lower; equal; greater})
       in
       build avl
   | Either.Right (Constant.Int cst) -> (

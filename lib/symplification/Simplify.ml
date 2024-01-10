@@ -154,7 +154,7 @@ let rec simplify_expr sigma e =
       let branchs = IMap.map (simplify_expr sigma) branchs in
       let other = simplify_expr sigma other in
       mk_int_case typ var var_typ branchs other
-  | TContructorCase (var, var_typ, branchs, other) ->
+  | TContructorCase (var, symb, branchs, other) ->
       let var =
         match subst sigma var with
         | Either.Left v ->
@@ -166,7 +166,7 @@ let rec simplify_expr sigma e =
       in
       let branchs = Constructor.Map.map (simplify_expr sigma) branchs in
       let other = Option.map (simplify_expr sigma) other in
-      mk_sexpr typ (SContructorCase (var, var_typ, branchs, other))
+      mk_sexpr typ (SContructorCase (var, symb, branchs, other))
   | TGetField (var, f) ->
       let var =
         match subst sigma var with

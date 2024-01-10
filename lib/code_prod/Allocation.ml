@@ -86,8 +86,9 @@ let rec fv_and_li e =
         (Variable.Set.union fv fv_x, Instance.Set.union ui ui_x)
       in
       (fv, ui)
-  | SCompareAndBranch {lhs; lower; equal; greater; _} ->
-      let fv = Variable.Set.singleton lhs in
+  | SIntCompareAndBranch {var; lower; equal; greater; _}
+  | SStringCompareAndBranch {var; lower; equal; greater; _} ->
+      let fv = Variable.Set.singleton var in
       let fv, ui =
         let fv_l, ui_l = fv_and_li lower in
         (Variable.Set.union fv fv_l, ui_l)
@@ -289,7 +290,7 @@ let rec allocate_expr aenv fp_cur e =
         (* And we build it. *)
         let clos =
           mk_aexpr typ
-            (ALocalClosure (block_lbl, loc_insts_pos, vars_pos, closure_size))
+            (ALocalClosure (block_lbl, vars_pos, loc_insts_pos, closure_size))
         in
         (clos, fp_cur) )
   | SLet (v, x, y) ->
@@ -299,16 +300,26 @@ let rec allocate_expr aenv fp_cur e =
       Hashtbl.add aenv.var_pos v v_pos ;
       let y, fp_max_2 = allocate_expr aenv fp_cur y in
       (mk_aexpr typ (ALet (fp_cur, x, y)), max fp_max_1 fp_max_2)
-  | SCompareAndBranch d ->
-      let v_pos = Hashtbl.find aenv.var_pos d.lhs in
+  | SIntCompareAndBranch d ->
+      let v_pos = Hashtbl.find aenv.var_pos d.var in
       let lower, fp_max_1 = allocate_expr aenv fp_cur d.lower in
       let equal, fp_max_2 = allocate_expr aenv fp_cur d.equal in
       let greater, fp_max_3 = allocate_expr aenv fp_cur d.greater in
       let fp_max = max fp_max_1 (max fp_max_2 fp_max_3) in
       ( mk_aexpr typ
-          (ACompareAndBranch {lower; equal; greater; rhs= d.rhs; lhs= v_pos})
+          (AIntCompareAndBranch {lower; equal; greater; cst= d.cst; var= v_pos})
       , fp_max )
-  | SContructorCase (v, v_typ, branches, other) ->
+  | SStringCompareAndBranch d ->
+      let v_pos = Hashtbl.find aenv.var_pos d.var in
+      let lower, fp_max_1 = allocate_expr aenv fp_cur d.lower in
+      let equal, fp_max_2 = allocate_expr aenv fp_cur d.equal in
+      let greater, fp_max_3 = allocate_expr aenv fp_cur d.greater in
+      let fp_max = max fp_max_1 (max fp_max_2 fp_max_3) in
+      ( mk_aexpr typ
+          (AStringCompareAndBranch
+             {lower; equal; greater; cst= d.cst; var= v_pos} )
+      , fp_max )
+  | SContructorCase (v, symb, branches, other) ->
       let v_pos = Hashtbl.find aenv.var_pos v in
       let branches, fp_max =
         Constructor.Map.fold
@@ -325,7 +336,7 @@ let rec allocate_expr aenv fp_cur e =
         | None ->
             (None, fp_max)
       in
-      (mk_aexpr typ (AContructorCase (v_pos, v_typ, branches, other)), fp_max)
+      (mk_aexpr typ (AContructorCase (v_pos, symb, branches, other)), fp_max)
   | SGetField (v, index) ->
       let v_pos = Hashtbl.find aenv.var_pos v in
       (mk_aexpr typ (AGetField (v_pos, index)), fp_cur)

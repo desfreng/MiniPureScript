@@ -31,3 +31,7 @@ val log_fid : TypedAst.Function.t
 val pure_fid : TypedAst.Function.t
 
 val show_fid : TypedAst.Function.t
+
+val show_bool_sid : Ids.Schema.t
+
+val show_int_sid : Ids.Schema.t

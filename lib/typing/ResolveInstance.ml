@@ -51,7 +51,7 @@ let rec resolve_global_inst genv lenv (to_res_cls, to_res_args) =
      All Weak Variables, waiting to be unified, are transformed as
      Quantified Variable. *)
   let typ_list_bis = sanitize to_res_args in
-  match TypeClass.Map.find_opt to_res_cls genv.schemas with
+  match TypeClass.Map.find_opt to_res_cls genv.tc2schemas with
   | Some l -> (
     (* [l] is the list of schema for the class [cls_name] *)
     try

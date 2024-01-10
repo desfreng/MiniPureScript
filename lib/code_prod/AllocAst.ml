@@ -57,19 +57,26 @@ and alloc_expr_kind =
   | AConstructor of
       Constructor.t * alloc_expr list (* Constructor application *)
   | AIf of alloc_expr * alloc_expr * alloc_expr (* A conditional branchment *)
-  | ALocalClosure of label * inst_pos list * var_pos list * int
+  | ALocalClosure of label * var_pos list * inst_pos list * int
   | ADoEffect of alloc_expr
   | ALet of int * alloc_expr * alloc_expr (* Definition of a variable *)
-  | ACompareAndBranch of
-      { lhs: var_pos
+  | AIntCompareAndBranch of
+      { var: var_pos
             (** The variable refering to value filtered by the constants *)
-      ; rhs: Constant.t  (** The constant we compare the expression *)
+      ; cst: int  (** The constant we compare the expression *)
+      ; lower: alloc_expr  (** if expr < const, we execute this branch *)
+      ; equal: alloc_expr  (** if expr = const, we execute this branch *)
+      ; greater: alloc_expr  (** if expr > const, we execute this branch *) }
+  | AStringCompareAndBranch of
+      { var: var_pos
+            (** The variable refering to value filtered by the constants *)
+      ; cst: string  (** The constant we compare the expression *)
       ; lower: alloc_expr  (** if expr < const, we execute this branch *)
       ; equal: alloc_expr  (** if expr = const, we execute this branch *)
       ; greater: alloc_expr  (** if expr > const, we execute this branch *) }
   | AContructorCase of
-      var_pos
-      * ttyp (* The variable refering to value filtered by the constructors *)
+      var_pos (* The variable refering to value filtered by the constructors *)
+      * Symbol.t
       * alloc_expr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * alloc_expr option

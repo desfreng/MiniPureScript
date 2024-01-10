@@ -1,4 +1,4 @@
-open CompileToX86Utils
+open X86CompileUtils
 
 (** [int_neg f asm x] : load the value of [-x] in [%rax].
     The value of [x] is compiled with [f]. *)

@@ -26,9 +26,9 @@ let function_lbl fid schema_prefix =
   let fname =
     match schema_prefix with
     | Some prefix ->
-        Format.sprintf "%s_%s" prefix (Ids.Function.name fid)
+        Format.sprintf "fun_%s_%s" prefix (Ids.Function.name fid)
     | None ->
-        Ids.Function.name fid
+        Format.sprintf "fun_%s" (Ids.Function.name fid)
   in
   fresh_lbl ~atomic:true fname
 
@@ -39,6 +39,8 @@ let schema_lbl sid =
 let string_lbl () = fresh_lbl ~atomic:false "string"
 
 let code_lbl () = fresh_lbl ~atomic:false "L"
+
+let jmp_lbl () = fresh_lbl ~atomic:false "JMP"
 
 let pp = Format.pp_print_string
 

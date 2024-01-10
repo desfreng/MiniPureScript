@@ -51,6 +51,8 @@ let in_file =
   | Some f ->
       f
 
+let out_file = Filename.chop_extension in_file ^ ".s"
+
 let () =
   try
     let in_chan = open_in in_file in
@@ -68,6 +70,12 @@ let () =
           let sprog = Simplify.simplify_program tprog in
           (* PP.pp_sprog Format.std_formatter sprog ; *)
           let aprog = Allocation.allocate_tprogram 8 sprog in
+          let x86 = X86CompileProg.to_x86 aprog in
+          let f = open_out out_file in
+          let fmt = Format.formatter_of_out_channel f in
+          X86_64.print_program fmt x86 ;
+          Format.fprintf fmt "@?" ;
+          close_out f ;
           PP.pp_aprog Format.std_formatter aprog
     with
     | Lexer.LexingError (terr, pos)

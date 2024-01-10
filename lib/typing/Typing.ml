@@ -406,7 +406,7 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
   in
   (* We append it to all the schema for the class *)
   let schem_decl_class =
-    match TypeClass.Map.find_opt prod_class genv.schemas with
+    match TypeClass.Map.find_opt prod_class genv.tc2schemas with
     | Some l -> (
         (* Instances already defined, so we check if one of them can be unified
            with us *)
@@ -439,7 +439,8 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
   (* And modify the global environment *)
   let genv =
     { genv with
-      schemas= TypeClass.Map.add prod_class schem_decl_class genv.schemas }
+      tc2schemas= TypeClass.Map.add prod_class schem_decl_class genv.tc2schemas
+    ; schemas= Schema.Map.add sid schem_decl genv.schemas }
   in
   (* This is the class declaration we implement *)
   let class_decl = TypeClass.Map.find prod_class genv.tclass in

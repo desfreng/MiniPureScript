@@ -32,16 +32,24 @@ and symp_expr_kind =
   | SIf of symp_expr * symp_expr * symp_expr (* A conditional branchment *)
   | SBlock of symp_expr list (* A block of effect *)
   | SLet of Variable.t * symp_expr * symp_expr (* Definition of a variable *)
-  | SCompareAndBranch of
-      { lhs: Variable.t
+  | SIntCompareAndBranch of
+      { var: Variable.t
             (** The variable refering to value filtered by the constants *)
-      ; rhs: Constant.t  (** The constant we compare the expression *)
+      ; cst: int  (** The constant we compare the expression *)
+      ; lower: symp_expr  (** if expr < const, we execute this branch *)
+      ; equal: symp_expr  (** if expr = const, we execute this branch *)
+      ; greater: symp_expr  (** if expr > const, we execute this branch *) }
+  | SStringCompareAndBranch of
+      { var: Variable.t
+            (** The variable refering to value filtered by the constants *)
+      ; cst: string  (** The constant we compare the expression *)
       ; lower: symp_expr  (** if expr < const, we execute this branch *)
       ; equal: symp_expr  (** if expr = const, we execute this branch *)
       ; greater: symp_expr  (** if expr > const, we execute this branch *) }
   | SContructorCase of
       Variable.t
-      * ttyp (* The variable refering to value filtered by the constructors *)
+      * Symbol.t
+        (* The variable refering to value filtered by the constructors *)
       * symp_expr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * symp_expr option

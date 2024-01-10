@@ -30,7 +30,21 @@ let show_class_name = "Show"
 
 let show_tid = TypeClass.fresh show_class_name
 
-let bool_show_sid, int_show_sid = (Schema.fresh show_tid, Schema.fresh show_tid)
+let show_bool_schema =
+  { schema_id= Schema.fresh show_tid
+  ; schema_req= []
+  ; schema_prod= (show_tid, [bool_t])
+  ; schema_tvars= QTypeVar.Set.empty }
+
+let show_int_schema =
+  { schema_id= Schema.fresh show_tid
+  ; schema_req= []
+  ; schema_prod= (show_tid, [int_t])
+  ; schema_tvars= QTypeVar.Set.empty }
+
+let show_bool_sid = show_bool_schema.schema_id
+
+let show_int_sid = show_int_schema.schema_id
 
 (* The builtin functions *)
 let not_fid, mod_fid, log_fid, pure_fid, show_fid =
@@ -104,16 +118,12 @@ let default_genv =
                { tc_fun_args= [TQuantifiedVar v]
                ; tc_fun_arity= 1
                ; tc_fun_ret= string_t } } )
+  ; tc2schemas=
+      TypeClass.Map.singleton show_tid [show_int_schema; show_bool_schema]
   ; schemas=
-      TypeClass.Map.singleton show_tid
-        [ { schema_id= int_show_sid
-          ; schema_req= []
-          ; schema_prod= (show_tid, [int_t])
-          ; schema_tvars= QTypeVar.Set.empty }
-        ; { schema_id= bool_show_sid
-          ; schema_req= []
-          ; schema_prod= (show_tid, [bool_t])
-          ; schema_tvars= QTypeVar.Set.empty } ] }
+      Schema.Map.of_list
+        [ (show_int_schema.schema_id, show_int_schema)
+        ; (show_bool_schema.schema_id, show_bool_schema) ] }
 
 (** A default local environment with a constant unit. *)
 let default_lenv =
