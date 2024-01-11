@@ -94,59 +94,54 @@ let int_mul f lenv (t, d) lhs rhs =
 (** [int_div f asm lhs rhs] : load the value of [lhs / rhs] in [%rax].
     The value of [lhs] and [rhs] is compiled with [f]. *)
 let int_div f lenv (t, d) lhs rhs =
-  let div_end = code_lbl () in
   (*
-          lhs -> rax
-          pushq  %rax
-          rhs -> rax
-          popq   rbx
-          testq  %rax, %rax
-          je     [div_end]
-          xorq   %rdx, %rdx
-          xchg   %rax, %rbx
-          idivq  %rbx
-     div_end:
-  *)
-  let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
-  let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
-  let t = t ++ testq !%rax !%rax in
-  let t = t ++ je div_end in
-  let t = t ++ xorq !%rdx !%rdx in
-  let t = t ++ xchg rax rbx in
-  let t = t ++ idivq !%rbx in
-  let t = t ++ label div_end in
-  (t, d, lenv)
+   we put:
+     - lhs in rbx
+     - rhs in rcx
+     - the "result" in rax
 
-(** [int_mod f asm lhs rhs] : load the value of [lhs % rhs] in [%rax].
-    The value of [lhs] and [rhs] is compiled with [f]. *)
-let int_mod f lenv (t, d) lhs rhs =
-  (*
-          lhs -> rax
-          pushq  %rax
-          rhs -> rax
-          popq   rbx
-          testq  %rax, %rax
-          je     [mod_end]
-          xorq   %rdx, %rdx
-          xchg   %rax, %rbx
-          idivq  %rbx
-          movq   %rdx, %rax
-     mod_end:
+          lhs ->  rax
+          pushq   %rax
+          rhs ->  rax
+          movq    %rax, %rcx
+          popq    %rbx
+          testq   %rcx, %rcx
+          je      div_end         # rhs = 0 -> so th result is 0
+          movq    %rbx, %rax
+          cqto
+          idivq   %rcx
+          testq   %rbx, %rbx
+          jns     div_end         # lhs > 0 so no change needed.
+          testq   %rcx, %rcx
+          js      rhs_neg         # rhs < 0 so rax += 1
+          dec     %rax
+          jmp     div_end
+
+      rhs_neg:
+          inc     %rax
+
+      div_end:
   *)
-  let mod_end = code_lbl () in
+  let div_end, rhs_neg = (code_lbl (), code_lbl ()) in
   let t, d, lenv = f lenv (t, d) lhs in
   let t, lenv = pushq lenv t !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
+  let t = t ++ movq !%rax !%rcx in
   let t, lenv = popq lenv t rbx in
-  let t = t ++ testq !%rax !%rax in
-  let t = t ++ je mod_end in
-  let t = t ++ xorq !%rdx !%rdx in
-  let t = t ++ xchg rax rbx in
-  let t = t ++ idivq !%rbx in
-  let t = t ++ movq !%rdx !%rax in
-  let t = t ++ label mod_end in
+  let t = t ++ testq !%rcx !%rcx in
+  let t = t ++ je div_end in
+  let t = t ++ movq !%rbx !%rax in
+  let t = t ++ cqto in
+  let t = t ++ idivq !%rcx in
+  let t = t ++ testq !%rbx !%rbx in
+  let t = t ++ jns div_end in
+  let t = t ++ testq !%rcx !%rcx in
+  let t = t ++ js rhs_neg in
+  let t = t ++ decq !%rax in
+  let t = t ++ jmp div_end in
+  let t = t ++ label rhs_neg in
+  let t = t ++ incq !%rax in
+  let t = t ++ label div_end in
   (t, d, lenv)
 
 (** [int_gt f lenv  (t, d) lhs rhs] : load the value of [lhs > rhs] in [%rax].

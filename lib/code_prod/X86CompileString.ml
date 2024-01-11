@@ -78,7 +78,7 @@ let strcpy lenv (t, d) dest src =
      (restore stack)
    *)
   let t = t ++ movq dest !%rdi in
-  let t = t ++ movq src !%rdi in
+  let t = t ++ movq src !%rsi in
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "strcpy" in
   let t, lenv = restore_stack lenv t align_data in
@@ -94,7 +94,7 @@ let strcat lenv (t, d) dest x =
      (restore stack)
    *)
   let t = t ++ movq dest !%rdi in
-  let t = t ++ movq x !%rdi in
+  let t = t ++ movq x !%rsi in
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "strcat" in
   let t, lenv = restore_stack lenv t align_data in
@@ -142,10 +142,10 @@ let string_concat f lenv (t, d) lhs rhs =
      addq   $32, %rsp
 
    *)
-  let lhs_str = ind ~ofs:(4 * lenv.word_size) rsp in
-  let rhs_str = ind ~ofs:(3 * lenv.word_size) rsp in
-  let lhs_len = ind ~ofs:(2 * lenv.word_size) rsp in
-  let rhs_len = ind ~ofs:(1 * lenv.word_size) rsp in
+  let lhs_str = ind ~ofs:(3 * lenv.word_size) rsp in
+  let rhs_str = ind ~ofs:(2 * lenv.word_size) rsp in
+  let lhs_len = ind ~ofs:(1 * lenv.word_size) rsp in
+  let rhs_len = ind ~ofs:(0 * lenv.word_size) rsp in
   let t = t ++ subq (imm (4 * lenv.word_size)) !%rsp in
   (* lhs -> lhs_str *)
   let t, d, lenv = f lenv (t, d) lhs in
@@ -160,9 +160,9 @@ let string_concat f lenv (t, d) lhs rhs =
   let t, d, lenv = strlen lenv (t, d) rhs_str in
   let t = t ++ movq !%rax rhs_len in
   (* (lhs_len + rhs_len + 1) -> %rdi *)
-  let t = t ++ movq lhs_len !%rsi in
-  let t = t ++ addq rhs_len !%rsi in
-  let t = t ++ incq !%rsi in
+  let t = t ++ movq lhs_len !%rdi in
+  let t = t ++ addq rhs_len !%rdi in
+  let t = t ++ incq !%rdi in
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "malloc" in
   let t, lenv = restore_stack lenv t align_data in

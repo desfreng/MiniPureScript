@@ -2,6 +2,8 @@ include X86_64
 include AllocAst
 open DefaultTypingEnv
 
+let pp_t ppf t = X86_64.print_program ppf {text= t; data= nop}
+
 type 'a env =
   { schema_lbl: label Schema.map
   ; funs_lbl: label Function.map
@@ -24,12 +26,13 @@ let load_constant lenv (t, d) constant dest =
       (t ++ movq (imm i) dest, d, lenv)
   | String txt ->
       let str_label = string_lbl () in
-      (t ++ movq (lab str_label) dest, d ++ label str_label ++ string txt, lenv)
+      (t ++ movq (ilab str_label) dest, d ++ label str_label ++ string txt, lenv)
 
 (** [load_var lenv asm var_pos dest] : load the value at [var_pos] in [dest]. *)
 let load_var lenv (t, d) var_loc dest =
   match var_loc with
   | AStackVar i ->
+      Format.printf "Var is at %i@." i ;
       (t ++ movq (ind ~ofs:i rbp) !%dest, d, lenv)
   | AClosVar i ->
       (t ++ movq (ind ~ofs:i r12) !%dest, d, lenv)
@@ -112,7 +115,9 @@ let enter_fun lenv (t, d) lbl res_space =
   let t = t ++ label lbl in
   let t, lenv = pushq lenv t !%rbp in
   let t = t ++ movq !%rsp !%rbp in
-  if res_space = 0 then (t, d, lenv)
+  if res_space = 0 then (
+    Format.printf "No space for %s@." lbl ;
+    (t, d, lenv) )
   else
     let t = t ++ subq (imm res_space) !%rsp in
     (t, d, lenv)
@@ -127,7 +132,7 @@ let add_pure lenv (t, d) =
   (* Pure x return the closure of the identitu function:
 
      pure_clos:
-       movq 8(%rsp), %rax
+       movq 8(%r12), %rax
        ret
 
      pure:
@@ -140,14 +145,14 @@ let add_pure lenv (t, d) =
   let pure_lbl, pure_clos = (function_lbl pure_fid None, local_lbl pure_fid) in
   (* pure closure :*)
   let t = t ++ label pure_clos in
-  let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rax in
+  let t = t ++ movq (ind ~ofs:lenv.word_size r12) !%rax in
   let t = t ++ ret in
   (* pure actual code *)
   let t = t ++ label pure_lbl in
   let t, lenv = alloc lenv t 2 in
-  let t = t ++ movq (ilab pure_clos) (ind ~ofs:0 rax) in
+  let t = t ++ movq (ilab pure_clos) (ind rax) in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx in
-  let t = t ++ movq !%rbx (ind ~ofs:0 rax) in
+  let t = t ++ movq !%rbx (ind ~ofs:lenv.word_size rax) in
   let t = t ++ ret in
   (* and we add the label to the environment *)
   let lenv =
@@ -158,7 +163,7 @@ let add_pure lenv (t, d) =
 let add_log lenv (t, d) =
   (*
      log_clos:
-       movq 8(%rsp), %rdi
+       movq 8(%r12), %rdi
        (align stack)
        call "puts"
        (restore stack)
@@ -174,7 +179,7 @@ let add_log lenv (t, d) =
   let log_lbl, log_clos = (function_lbl log_fid None, local_lbl log_fid) in
   (* pure closure :*)
   let t = t ++ label log_clos in
-  let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rsi in
+  let t = t ++ movq (ind ~ofs:lenv.word_size r12) !%rdi in
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "puts" in
   let t, lenv = restore_stack lenv t align_data in
@@ -182,9 +187,9 @@ let add_log lenv (t, d) =
   (* pure actual code *)
   let t = t ++ label log_lbl in
   let t, lenv = alloc lenv t 2 in
-  let t = t ++ movq (ilab log_clos) (ind ~ofs:0 rax) in
+  let t = t ++ movq (ilab log_clos) (ind rax) in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx in
-  let t = t ++ movq !%rbx (ind ~ofs:0 rax) in
+  let t = t ++ movq !%rbx (ind ~ofs:lenv.word_size rax) in
   let t = t ++ ret in
   (* and we add the label to the environment *)
   let lenv =
@@ -221,7 +226,7 @@ let add_show_int lenv (t, d) =
   let d = d ++ label show_int ++ address [show_int_f] in
   let t = t ++ label show_int_f in
   let t, lenv =
-    alloc lenv t ((20 / lenv.word_size) + 1 (* 3 qwords in x86. *))
+    alloc lenv t ((20 / lenv.word_size) + 1 (* 3 * 8 bytes in x86. *))
   in
   let t = t ++ movq !%rax !%r13 in
   let t = t ++ movq !%r13 !%rdi in
@@ -283,8 +288,39 @@ let add_show_bool lenv (t, d) =
   in
   (t, d, lenv)
 
+let add_mod lenv (t, d) =
+  let mod_fun = function_lbl mod_fid None in
+  let mod_end, rhs_neg = (code_lbl (), code_lbl ()) in
+  let t = t ++ label mod_fun in
+  let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx (* lhs -> rbx *) in
+  let t =
+    t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax (* rhs -> rax *)
+  in
+  let t = t ++ testq !%rax !%rax in
+  let t = t ++ je mod_end (* rax = 0 => lhs % rhs = 0 *) in
+  let t = t ++ movq !%rax !%rcx (* rhs -> rcx *) in
+  let t = t ++ movq !%rbx !%rax in
+  let t = t ++ cqto in
+  let t = t ++ idivq !%rcx in
+  let t = t ++ movq !%rdx !%rax (* lhs "%" rhs -> rax *) in
+  let t = t ++ testq !%rbx !%rbx in
+  let t = t ++ jns mod_end (* lhs > 0 => result if ok. *) in
+  let t = t ++ testq !%rcx !%rcx in
+  let t = t ++ js rhs_neg (* rhs < 0 => we return %rax - rhs *) in
+  let t = t ++ addq !%rcx !%rax (* rhs > 0 => we return %rax + rhs *) in
+  let t = t ++ jmp mod_end in
+  let t = t ++ label rhs_neg in
+  let t = t ++ subq !%rcx !%rax in
+  let t = t ++ label mod_end in
+  let t = t ++ ret in
+  let lenv =
+    {lenv with funs_lbl= Function.Map.add mod_fid mod_fun lenv.funs_lbl}
+  in
+  (t, d, lenv)
+
 let add_builtins lenv =
   let t, d = (nop, nop) in
+  let t, d, lenv = add_mod lenv (t, d) in
   let t, d, lenv = add_pure lenv (t, d) in
   let t, d, lenv = add_log lenv (t, d) in
   let t, d, lenv = add_show_int lenv (t, d) in

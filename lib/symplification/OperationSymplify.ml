@@ -94,10 +94,6 @@ let mk_div typ lhs rhs =
 
          In PureScript: forall x. x/0 = 0 *)
       mk_const typ (Int 0)
-  | SConstant (Int a), SConstant (Int b) ->
-      mk_const typ (Int (a / b))
-  | _, SConstant (Int 1) ->
-      lhs
   | _ ->
       mk_sexpr typ (SArithOp (lhs, Div, rhs))
 
@@ -109,8 +105,6 @@ let mk_mod typ lhs rhs =
 
          In PureScript: forall x. x mod 0 = 0 *)
       mk_const typ (Int 0)
-  | SConstant (Int a), SConstant (Int b) ->
-      mk_const typ (Int (a mod b))
   | _ ->
       mk_sexpr typ (SArithOp (lhs, Mod, rhs))
 

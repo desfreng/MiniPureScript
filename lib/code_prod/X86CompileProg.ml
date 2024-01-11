@@ -126,8 +126,12 @@ let to_x86 (aprog : AllocAst.aprogram) =
   let main_label = Function.Map.find aprog.aprog_main lenv.funs_lbl in
   let t = t ++ globl start_label in
   let t, d, lenv = enter_fun lenv (t, d) start_label 0 in
+  let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call main_label in
-  let t = t ++ call_star !%rax in
+  let t = t ++ movq !%rax !%r12 in
+  let t = t ++ call_star (ind rax) in
+  let t, lenv = restore_stack lenv t align_data in
+  let t = t ++ xorq !%rax !%rax in
   let t, d, lenv = leave_fun lenv (t, d) in
   assert (lenv.stack_pos = -8) ;
   {text= t; data= d}

@@ -73,7 +73,7 @@ and compile_arith_op lenv asm lhs op rhs =
   | Div ->
       int_div compile_aexpr lenv asm lhs rhs
   | Mod ->
-      int_mod compile_aexpr lenv asm lhs rhs
+      compile_fun_call lenv asm mod_fid [] [lhs; rhs]
 
 and compile_boolean_op lenv asm lhs op rhs =
   match op with
@@ -131,7 +131,7 @@ and compile_inst_call lenv (t, d) inst fid args =
             arg -> rax
             pushq rax
 
-      movq (nb_args + 1)(%rsp) %rax (retrieve the pushed instance)
+      movq (nb_args)(%rsp) %rax (retrieve the pushed instance)
       (assert is stack aligned)
       call *(f_index(%rax))
       popnq (1 + nb args)
@@ -151,7 +151,7 @@ and compile_inst_call lenv (t, d) inst fid args =
         (t, d, lenv) )
       (t, d, lenv) (List.rev args)
   in
-  let t = t ++ movq (ind ~ofs:((nb_push + 1) * lenv.word_size) rsp) !%rax in
+  let t = t ++ movq (ind ~ofs:(nb_args * lenv.word_size) rsp) !%rax in
   assert (lenv.is_aligned lenv.stack_pos) ;
   let t = t ++ call_star (ind ~ofs:(fid_in_call * lenv.word_size) rax) in
   let t, lenv = popqn lenv t nb_push in
@@ -172,7 +172,7 @@ and compile_constructor lenv (t, d) cid args =
   *)
   let nb_words = 1 + List.length args in
   let t, lenv = alloc lenv t nb_words in
-  let t = t ++ movq (imm (Constructor.index_in_symbol cid)) (ind ~ofs:0 rax) in
+  let t = t ++ movq (imm (Constructor.index_in_symbol cid)) (ind rax) in
   let t = t ++ movq !%rax !%rbx in
   let t, d, lenv, index =
     List.fold_left
@@ -192,7 +192,7 @@ and compile_if lenv (t, d) cond tb fb =
   (*
         cond -> rax
         testq   %rax, %rax
-        jne     else_branch
+        je     else_branch
         tb -> rax
         jmp     if_end
     else_branch:
@@ -202,7 +202,7 @@ and compile_if lenv (t, d) cond tb fb =
   let else_branch, if_end = (code_lbl (), code_lbl ()) in
   let t, d, lenv = compile_aexpr lenv (t, d) cond in
   let t = t ++ testq !%rax !%rax in
-  let t = t ++ jne else_branch in
+  let t = t ++ je else_branch in
   let t, d, lenv = compile_aexpr lenv (t, d) tb in
   let t = t ++ jmp if_end in
   let t = t ++ label else_branch in
@@ -220,7 +220,7 @@ and compile_local_closure lenv (t, d) lbl vars insts closure_size =
           load inst i(%rax)
    *)
   let t, lenv = alloc lenv t closure_size in
-  let t, index = (t ++ movq (ilab lbl) (ind ~ofs:0 rax), 1) in
+  let t, index = (t ++ movq (ilab lbl) (ind rax), 1) in
   let t, d, lenv, index =
     List.fold_left
       (fun (t, d, lenv, index) var_pos ->
@@ -255,7 +255,7 @@ and compile_do_effect lenv (t, d) x =
   let t, d, lenv = compile_aexpr lenv (t, d) x in
   let t = t ++ movq !%rax !%r12 in
   let t, align_data, lenv = align_stack lenv t 0 in
-  let t = t ++ call_star (ind ~ofs:0 rax) in
+  let t = t ++ call_star (ind rax) in
   let t, lenv = restore_stack lenv t align_data in
   let t, lenv = popq lenv t r12 in
   (t, d, lenv)
@@ -289,7 +289,7 @@ and compile_int_compare_and_branch lenv (t, d) var cst lt eq gt =
     (code_lbl (), code_lbl (), code_lbl ())
   in
   let t, d, lenv = load_var lenv (t, d) var rax in
-  let t = t ++ cmpq !%rax (imm cst) in
+  let t = t ++ cmpq (imm cst) !%rax in
   let t = t ++ jg greater_lbl in
   let t = t ++ jl lower_lbl in
   let t, d, lenv = compile_aexpr lenv (t, d) eq in
@@ -393,7 +393,7 @@ and compile_constructor_case lenv (t, d) v symb branchs other =
     ++ address (List.map (fun (_, _, a) -> a) cstr_list)
   in
   let t, d, lenv = load_var lenv (t, d) v rax in
-  let t = t ++ movq (ind ~ofs:0 rax) !%rax in
+  let t = t ++ movq (ind rax) !%rax in
   let t = t ++ addq (ilab jmp_table_lbl) !%rax in
   let t = t ++ jmp_star !%rax in
   let t, d, lenv =

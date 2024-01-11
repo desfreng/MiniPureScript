@@ -41,9 +41,9 @@ let boolean_not f lenv (t, d) x =
   (*
       x  -> rax
       not   %rax
-      andq  %rax, $1
+      andq  $1, %rax
   *)
   let t, d, lenv = f lenv (t, d) x in
   let t = t ++ notq !%rax in
-  let t = t ++ andq !%rax (imm 1) in
+  let t = t ++ andq (imm 1) !%rax in
   (t, d, lenv)

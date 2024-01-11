@@ -295,11 +295,11 @@ let rec allocate_expr aenv fp_cur e =
         (clos, fp_cur) )
   | SLet (v, x, y) ->
       let x, fp_max_1 = allocate_expr aenv fp_cur x in
-      let fp_cur = fp_cur - aenv.word_size in
-      let v_pos = AStackVar fp_cur in
+      let fp_cur = fp_cur + aenv.word_size in
+      let v_pos = AStackVar (-fp_cur) in
       Hashtbl.add aenv.var_pos v v_pos ;
       let y, fp_max_2 = allocate_expr aenv fp_cur y in
-      (mk_aexpr typ (ALet (fp_cur, x, y)), max fp_max_1 fp_max_2)
+      (mk_aexpr typ (ALet (-fp_cur, x, y)), max fp_max_1 fp_max_2)
   | SIntCompareAndBranch d ->
       let v_pos = Hashtbl.find aenv.var_pos d.var in
       let lower, fp_max_1 = allocate_expr aenv fp_cur d.lower in
