@@ -1,6 +1,10 @@
 all: ppurse
 
-ppurse:
+sources  := $(shell find . -regextype sed -regex "\./\(lib\|bin\)/.*\|\./dune-project")
+ee:
+	printf $(sources)
+
+ppurse: $(sources)
 	dune build bin/main.exe
 	cp -f _build/default/bin/main.exe ppurse
 
