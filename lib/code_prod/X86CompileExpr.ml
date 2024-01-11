@@ -18,7 +18,7 @@ let rec compile_inst lenv (t, d) = function
             let t, d, lenv = compile_inst lenv (t, d) i in
             let t, lenv = pushq lenv t !%rax in
             (t, d, lenv) )
-          (t, d, lenv) args
+          (t, d, lenv) (List.rev args)
       in
       assert (lenv.is_aligned lenv.stack_pos) ;
       let t = t ++ call (Schema.Map.find sid lenv.schema_lbl) in
@@ -359,8 +359,9 @@ and compile_constructor_case lenv (t, d) v symb branchs other =
           .text
           load_var v -> rax
           movq  0(%rax), %rax
+          mulq  [word_size], %rax
           addq  $cstr_jmp_lbl, %rax
-          jmp   %rax
+          jmp   %(rax)
 
      code_cstr1:
           branch(cstr1) -> rax
@@ -394,8 +395,9 @@ and compile_constructor_case lenv (t, d) v symb branchs other =
   in
   let t, d, lenv = load_var lenv (t, d) v rax in
   let t = t ++ movq (ind rax) !%rax in
+  let t = t ++ imulq (imm lenv.word_size) !%rax in
   let t = t ++ addq (ilab jmp_table_lbl) !%rax in
-  let t = t ++ jmp_star !%rax in
+  let t = t ++ jmp_star (ind rax) in
   let t, d, lenv =
     List.fold_left
       (fun (t, d, lenv) (_, cstr, lbl) ->

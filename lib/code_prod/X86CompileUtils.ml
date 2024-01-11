@@ -59,7 +59,7 @@ let compile_get_field lenv (t, d) v_pos index =
       movq [(1 + index) * word_size](%rax) %rax
   *)
   let t, d, lenv = load_var lenv (t, d) v_pos rax in
-  let t = t ++ movq !%rax (ind ~ofs:((1 + index) * lenv.word_size) rax) in
+  let t = t ++ movq (ind ~ofs:((1 + index) * lenv.word_size) rax) !%rax in
   (t, d, lenv)
 
 let align_stack lenv t nb_push =
@@ -207,6 +207,7 @@ let add_show_int lenv (t, d) =
          movq   %r13, %rdi
          movq   $format, %rsi
          movq   8(%rsp), %rdx
+         xorq   %rax, %rax
          (align stack)
          call "sprintf"
          (restore stack)
@@ -232,6 +233,7 @@ let add_show_int lenv (t, d) =
   let t = t ++ movq !%r13 !%rdi in
   let t = t ++ movq (ilab format_str) !%rsi in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rdx in
+  let t = t ++ xorq !%rax !%rax in
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "sprintf" in
   let t, lenv = restore_stack lenv t align_data in
