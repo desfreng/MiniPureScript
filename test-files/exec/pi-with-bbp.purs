@@ -72,6 +72,20 @@ loop i = do
   (let q = pi i in log ("bbp (" <> show i <> ") = " <> show q <> " ~ " <> to_string 15 q))
 
 
--- WARNING
 main :: Effect Unit
-main =  loop 3
+main =  loop 3  -- WARNING this only work because we use 64bit integers !
+                -- Purescript is accurate up to rank 1...
+                -- The output has been generated with the following Python code:
+
+-- from sympy import *
+--
+-- prec = 15
+-- pi = Rational(0)
+-- for n in range(0, 4):
+--     u = Rational(4, 8*n+1) - Rational(2, (8*n+4)) - \
+--         Rational(1, (8*n+5)) - Rational(1, (8*n+6))
+--     d = Rational(1, 16) ** n
+--     pi += d * u
+--     rep = int(pi.evalf(prec + 1) * (10 ** prec)) / \
+--         (10 ** prec)  #  to truncate instead of round off
+--     print(f"bbp ({n}) = {pi} ~ {rep}")

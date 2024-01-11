@@ -275,7 +275,7 @@ and compile_int_compare_and_branch lenv (t, d) var cst lt eq gt =
       load_var var -> rax
       cmpq    %rax $cst
       jg      greater
-      jl      lower
+      js      lower
       equal -> rax
       jmp     branch_end
   lower:
@@ -291,7 +291,7 @@ and compile_int_compare_and_branch lenv (t, d) var cst lt eq gt =
   let t, d, lenv = load_var lenv (t, d) var rax in
   let t = t ++ cmpq (imm cst) !%rax in
   let t = t ++ jg greater_lbl in
-  let t = t ++ jl lower_lbl in
+  let t = t ++ js lower_lbl in
   let t, d, lenv = compile_aexpr lenv (t, d) eq in
   let t = t ++ jmp end_lbl in
   let t = t ++ label lower_lbl in
@@ -309,9 +309,9 @@ and compile_string_compare_and_branch lenv (t, d) var cst lt eq gt =
       (align stack)
       call  strcmp
       (restore stack)
-      testq   %rax, %rax
+      testq   %eax, %eax <- strcmp is a Int -> 4 bytes
       jg      greater
-      jl      lower
+      js      lower
       equal -> rax
       jmp     branch_end
   lower:
@@ -319,7 +319,7 @@ and compile_string_compare_and_branch lenv (t, d) var cst lt eq gt =
       jmp branch_end
   greater:
       greater -> rax
-  end:
+  branch_end:
   *)
   let lower_lbl, greater_lbl, end_lbl, string_cst =
     (code_lbl (), code_lbl (), code_lbl (), string_lbl ())
@@ -330,9 +330,9 @@ and compile_string_compare_and_branch lenv (t, d) var cst lt eq gt =
   let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call "strcmp" in
   let t, lenv = restore_stack lenv t align_data in
-  let t = t ++ testq !%rax !%rax in
+  let t = t ++ testl !%eax !%eax in
   let t = t ++ jg greater_lbl in
-  let t = t ++ jl lower_lbl in
+  let t = t ++ js lower_lbl in
   let t, d, lenv = compile_aexpr lenv (t, d) eq in
   let t = t ++ jmp end_lbl in
   let t = t ++ label lower_lbl in

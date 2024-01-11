@@ -110,11 +110,13 @@ let int_div f lenv (t, d) lhs rhs =
           movq    %rbx, %rax
           cqto
           idivq   %rcx
+          testq   %rdx, %rdx
+          jns     div_end         # lhs % rhs = 0 so no change needed.
           testq   %rbx, %rbx
           jns     div_end         # lhs > 0 so no change needed.
           testq   %rcx, %rcx
           js      rhs_neg         # rhs < 0 so rax += 1
-          dec     %rax
+          dec     %rax            # rhs > 0 so rax -= 1
           jmp     div_end
 
       rhs_neg:
@@ -133,6 +135,8 @@ let int_div f lenv (t, d) lhs rhs =
   let t = t ++ movq !%rbx !%rax in
   let t = t ++ cqto in
   let t = t ++ idivq !%rcx in
+  let t = t ++ testq !%rdx !%rdx in
+  let t = t ++ je div_end in
   let t = t ++ testq !%rbx !%rbx in
   let t = t ++ jns div_end in
   let t = t ++ testq !%rcx !%rcx in

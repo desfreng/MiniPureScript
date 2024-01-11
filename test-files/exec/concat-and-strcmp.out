@@ -1,0 +1,8 @@
+'Hello' == 'World'? : false
+'Hello' /= 'World'? : true
+'Hello' == 'hello'? : false
+'Hello' /= 'hello'? : true
+'Hello' == 'Hello '? : false
+'Hello' /= 'Hello '? : true
+'Hello' == 'Hello'? : true
+'Hello' /= 'Hello'? : false

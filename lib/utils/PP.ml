@@ -380,14 +380,14 @@ let rec pp_aexpr ppf aexpr =
         "@[<hv 2>(compare@ %a@ with@ %s@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
+         @[greater@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
         d.equal pp_aexpr d.greater
   | AIntCompareAndBranch d ->
       fprintf ppf
         "@[<hv 2>(compare@ %a@ with@ %i@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
+         @[greater@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
         d.equal pp_aexpr d.greater
   | AContructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," pp_var_pos e ;
@@ -493,14 +493,14 @@ let rec pp_sexpr ppf sexpr =
         "@[<hv 2>(compare@ %a@ with@ %s@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
+         @[greater@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
         d.equal pp_sexpr d.greater
   | SIntCompareAndBranch d ->
       fprintf ppf
         "@[<hv 2>(compare@ %a@ with@ %i@;\
          @[lower@ %a@]@;\
          @[equal@ %a@]@;\
-         @[equal@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
+         @[greater@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
         d.equal pp_sexpr d.greater
   | SContructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp e ;

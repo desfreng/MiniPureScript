@@ -218,10 +218,10 @@ let add_show_int lenv (t, d) =
      show_int: <- This is the instance
          .quad $show_int_f
      format:
-         .string "%d"
+         .string "%ld"
   *)
   let format_str = string_lbl () in
-  let d = d ++ label format_str ++ string "%d" in
+  let d = d ++ label format_str ++ string "%ld" in
   let show_int = schema_lbl show_int_sid in
   let show_int_f = function_lbl show_fid (Some show_int) in
   let d = d ++ label show_int ++ address [show_int_f] in
@@ -305,6 +305,8 @@ let add_mod lenv (t, d) =
   let t = t ++ cqto in
   let t = t ++ idivq !%rcx in
   let t = t ++ movq !%rdx !%rax (* lhs "%" rhs -> rax *) in
+  let t = t ++ testq !%rax !%rax in
+  let t = t ++ je mod_end (* lhs % rhs = 0 -> result ok. *) in
   let t = t ++ testq !%rbx !%rbx in
   let t = t ++ jns mod_end (* lhs > 0 => result if ok. *) in
   let t = t ++ testq !%rcx !%rcx in

@@ -115,6 +115,7 @@ pattern:
 
 patarg:
 | c=constant          { mk_ast (PatConstant c) $loc }
+| "-" i=INT_CST       { mk_ast (PatConstant (mk_ast (Int (-i)) $loc)) $loc }
 | v=LINDENT           { mk_ast (PatVariable v) $loc }
 // An Uindent can only be a "zeroary" Constructor
 // because we have no record in MiniPureScript
