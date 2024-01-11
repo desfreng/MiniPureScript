@@ -352,8 +352,9 @@ TSWLatexianTemp*
 # glossaries
 *.glstex
 
-**/*.dhall
 .purs-repl
 !test-files/**/*.out
-*.s
+test-files/**/*.s
 **/a.out
+*.gdb_history
+test-files/out
