@@ -1,6 +1,6 @@
 open AllocAst
 
-(** [local_inst] t compute the set of all local instances occuring in an
+(** [local_inst] t compute the set of all local instances occurring in an
     instance tree. *)
 let rec local_inst = function
   | TLocalInstance i ->
@@ -12,7 +12,7 @@ let rec local_inst = function
         (fun li i -> Instance.Set.union li (local_inst i))
         Instance.Set.empty l
 
-(** [fv_and_li e] computes the free vars occuring and the local instance
+(** [fv_and_li e] computes the free vars occurring and the local instance
     used in [e]. *)
 let rec fv_and_li e =
   match e.symp_expr with
@@ -102,7 +102,7 @@ let rec fv_and_li e =
         (Variable.Set.union fv fv_g, Instance.Set.union ui ui_g)
       in
       (fv, ui)
-  | SContructorCase (v, _, branchs, other) ->
+  | SConstructorCase (v, _, branchs, other) ->
       let fv, ui = (Variable.Set.singleton v, Instance.Set.empty) in
       let fv, ui =
         Constructor.Map.fold
@@ -240,7 +240,7 @@ let rec allocate_expr aenv fp_cur e =
         in
         let index =
           (* the ith variable of the closure is a the offset
-             [(i + 1) * word_size]. Exemple :
+             [(i + 1) * word_size]. Example :
              the first one is a 8(%...), the second 16(%...), etc.
 
              That's why we start index at 1. *)
@@ -273,7 +273,7 @@ let rec allocate_expr aenv fp_cur e =
           {local_body= block_exprs; local_stack_reserved= block_fp_max}
         in
         Hashtbl.add aenv.new_local_blocks block_lbl new_local_block ;
-        (* We compute the position of each free variable occuring in this
+        (* We compute the position of each free variable occurring in this
            closure *)
         let vars_pos =
           List.map
@@ -320,7 +320,7 @@ let rec allocate_expr aenv fp_cur e =
           (AStringCompareAndBranch
              {lower; equal; greater; cst= d.cst; var= v_pos} )
       , fp_max )
-  | SContructorCase (v, symb, branches, other) ->
+  | SConstructorCase (v, symb, branches, other) ->
       let v_pos = Hashtbl.find aenv.var_pos v in
       let branches, fp_max =
         Constructor.Map.fold
@@ -337,7 +337,7 @@ let rec allocate_expr aenv fp_cur e =
         | None ->
             (None, fp_max)
       in
-      (mk_aexpr typ (AContructorCase (v_pos, symb, branches, other)), fp_max)
+      (mk_aexpr typ (AConstructorCase (v_pos, symb, branches, other)), fp_max)
   | SGetField (v, index) ->
       let v_pos = Hashtbl.find aenv.var_pos v in
       (mk_aexpr typ (AGetField (v_pos, index)), fp_cur)
@@ -353,7 +353,7 @@ let allocate_fun word_size sfun schema_data =
   let index =
     (* the ith argument of the function is at the offset [(index + 2) * word_size]
        of rbp.
-       Exemple (x86_64):
+       Example (x86_64):
          the first one is at 16(%rbp), the second 24(%rbp), etc.
        8(%rbp) is the return address and 0(%rbp) is the old rbp pointer.
        That's why we start index at 2.
@@ -396,12 +396,12 @@ let allocate_fun word_size sfun schema_data =
     ; afun_stack_reserved }
   , fun_label )
 
-let allocate_schema word_size (sshema : sschema) =
-  let schema_label = schema_lbl sshema.sschema_id in
+let allocate_schema word_size sschema =
+  let schema_label = schema_lbl sschema.sschema_id in
   let req_inst_pos =
     List.mapi
-      (fun index inst -> (inst, (index + sshema.sschema_nb_funs) * word_size))
-      sshema.sschema_insts
+      (fun index inst -> (inst, (index + sschema.sschema_nb_funs) * word_size))
+      sschema.sschema_insts
   in
   let aschema_funs, aschema_label =
     Function.Map.(
@@ -411,17 +411,17 @@ let allocate_schema word_size (sshema : sschema) =
             allocate_fun word_size sfun (Some (schema_label, req_inst_pos))
           in
           (add fid afun afuns, add fid fun_label afun_labels) )
-        sshema.sschema_funs (empty, empty) )
+        sschema.sschema_funs (empty, empty) )
   in
-  ({aschema_id= sshema.sschema_id; aschema_funs; aschema_label}, schema_label)
+  ({aschema_id= sschema.sschema_id; aschema_funs; aschema_label}, schema_label)
 
-let allocate_tprogram word_size (p : sprogram) =
+let allocate_tprogram word_size p =
   let aschemas, aschema_labels =
     Schema.Map.(
       fold
-        (fun sid sshema (aschemas, ashema_labels) ->
-          let aschema, ashema_label = allocate_schema word_size sshema in
-          (add sid aschema aschemas, add sid ashema_label ashema_labels) )
+        (fun sid sschema (aschemas, aschema_labels) ->
+          let aschema, aschema_label = allocate_schema word_size sschema in
+          (add sid aschema aschemas, add sid aschema_label aschema_labels) )
         p.sschemas (empty, empty) )
   in
   let afuns, afuns_labels =

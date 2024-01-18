@@ -65,7 +65,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       let rhs_texpr, rhs_i2r = type_expr genv lenv rhs int_t in
       (TBinOp (lhs_texpr, op, rhs_texpr), int_t, Monoid.(lhs_i2r <> rhs_i2r))
   | BinOp (lhs, ((Gt | Ge | Lt | Le) as op), rhs) ->
-      (* Comparaisons *)
+      (* Comparisons *)
       let lhs_texpr, lhs_i2r = type_expr genv lenv lhs int_t in
       let rhs_texpr, rhs_i2r = type_expr genv lenv rhs int_t in
       (TBinOp (lhs_texpr, op, rhs_texpr), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
@@ -80,7 +80,7 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
         (TBinOp (lhs, op, rhs), bool_t, Monoid.(lhs_i2r <> rhs_i2r))
       else if is_unit_t lhs_t then
         (* a == b with a::Unit and b::Unit is always true. Moreover,
-           because a and b cannot do side effect, we dont have to evaluate them.
+           because a and b cannot do side effect, we don't have to evaluate them.
            We apply the same trick for a /= b with a::Unit and b::Unit. *)
         match op with
         | Eq ->
@@ -141,8 +141,8 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
       in
       (* [expr_k] is the [texpr_kind] of [e] and [te] its type *)
       let expr_k, te, e_i2r = compute_expr_type genv lenv e in
-      (* For each bindings, we add a TLet struct.
-         This struct is like in OCaml, we bind one variable to an expression
+      (* For each bindings, we add a TLet structure.
+         This structure is like in OCaml, it binds one variable to an expression
          and continue the computation on another one. *)
       let lexprs =
         List.fold_left
@@ -310,7 +310,7 @@ and type_fun_call genv lenv (fid, args) expr =
       (* We compute the expression of each argument, the return type and all
          the instances to resolve in the arguments.
          We also returns the substitution from the quantified type of the
-         function to thoses of the arguments. *)
+         function to those of the arguments. *)
       let sigma, args_exprs, res_typ, args_i2r =
         check_fun_call genv lenv (fid, args) fun_decl expr
       in
@@ -335,7 +335,7 @@ and type_fun_call genv lenv (fid, args) expr =
       (* We compute the expression of each argument, the return type and all
          the instances to resolve in the arguments.
          We also returns the substitution from the quantified type of the
-         function to thoses of the arguments. *)
+         function to those of the arguments. *)
       let sigma, args_exprs, res_typ, args_i2r =
         check_fun_call genv lenv (fid, args) fun_decl expr
       in
@@ -343,7 +343,7 @@ and type_fun_call genv lenv (fid, args) expr =
       let inst_args =
         List.map (fun qvar -> Hashtbl.find sigma qvar) decl.tclass_tvars
       in
-      (* This is the instance in which this function is defineds. *)
+      (* This is the instance in which this function is defined. *)
       let fun_inst = resolve genv lenv (cid, inst_args) expr in
       ( TTypeClassFunApp (fun_inst, fid, args_exprs)
       , res_typ

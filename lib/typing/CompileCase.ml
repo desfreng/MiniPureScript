@@ -52,7 +52,7 @@ let constructor_mat genv m pat_cstr =
       | TVariable v ->
           (v, hd.expr_typ, tl)
       | _ ->
-          raise (Invalid_argument "The first scrutinee must be a variable.") )
+          raise (Invalid_argument "The first scrutineer must be a variable.") )
   in
   (* [n_scrut] is the list of scrutineers of the new matrix
      [cstr_args_typ] is the type of each argument of the constructor *)
@@ -119,7 +119,7 @@ let constructor_mat genv m pat_cstr =
 (** [build_submat genv m] builds the sub-matrix for each pattern constructor of
     the first column of pattern in [m] *)
 let build_submat genv m =
-  (* For each row, we build the submatrix associated with the constructor. *)
+  (* For each row, we build the sub-matrix associated with the constructor. *)
   Monoid.fold_left
     (fun acc pat_row ->
       match pat_row with
@@ -197,7 +197,7 @@ let rec f genv typ m =
         let _, act = Monoid.first m.pat_rows in
         act
     | l -> (
-        (* All expression must be closed wit hthis handler. It introduces a fresh
+        (* All expression must be closed with [close]. It introduces a fresh
            variable if the pattern is not an expression. *)
         let v, v_typ, m, close =
           let e, tl =
@@ -321,13 +321,13 @@ let rec f genv typ m =
             in
             if otherwise_ignored then
               close
-                { expr= TContructorCase (v, symb, branch_expr, None)
+                { expr= TConstructorCase (v, symb, branch_expr, None)
                 ; expr_typ= typ }
             else
               let otherwise_expr = f genv typ otherwise_mat in
               close
                 { expr=
-                    TContructorCase (v, symb, branch_expr, Some otherwise_expr)
+                    TConstructorCase (v, symb, branch_expr, Some otherwise_expr)
                 ; expr_typ= typ } )
 
 (** [compile_case genv typ e pats actions] compiles the case statement over [e]

@@ -59,7 +59,7 @@ let instance_list_to_lenv instl =
   (inst_list, inst_map)
 
 (** [different_var_types error var_types] checks that all variables in the list
-    [var_types] are distincts. If so return this list and this length. Otherwise,
+    [var_types] are distinct. If so return this list and this length. Otherwise,
     call the function [error] with the repeating variable as argument. *)
 let different_var_types error var_types =
   List.fold_right (* We preserve the type variable order *)
@@ -126,8 +126,7 @@ let check_pats_and_expr permissive genv lenv fid (arity, ret_typ, args_typs)
     TypingError.function_arity_mismatch fid arity nb_args decl
   else
     let pats =
-      (* [i] is the curent index in the list
-         [lenv] the current local environment (we merge them at each iteration)
+      (* [i] is the current index in the list
          [pat] the current pattern
          [typ] its expected type *)
       map2i
@@ -395,7 +394,7 @@ let check_instance genv req_inst prod_inst fun_decls permissive decl =
   let ((prod_class, prod_args) as prod_inst) =
     check_wf_instance genv lenv prod_inst
   in
-  (* We create a new shema id *)
+  (* We create a new schema id *)
   let sid = Schema.fresh prod_class in
   (* To build the schema *)
   let schem_decl =

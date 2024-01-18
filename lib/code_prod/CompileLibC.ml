@@ -1,7 +1,8 @@
 open AllocAst
 open X86_64
 
-let enter_fun t lbl res_space =
+let enter_fun lbl res_space =
+  let t = nop in
   let t = t ++ label lbl in
   let t = t ++ pushq !%rbp in
   let t = t ++ movq !%rsp !%rbp in
@@ -10,7 +11,8 @@ let enter_fun t lbl res_space =
     let t = t ++ subq (imm res_space) !%rsp in
     t
 
-let leave_fun t =
+let leave_fun =
+  let t = nop in
   let t = t ++ movq !%rbp !%rsp in
   let t = t ++ popq rbp in
   let t = t ++ ret in
@@ -18,7 +20,7 @@ let leave_fun t =
 
 let malloc_lbl = Label.with_prefix "boxed_malloc"
 
-let add_malloc lenv (t, d) =
+let add_malloc lenv =
   (*
    boxed_malloc:
       (enter function)
@@ -27,16 +29,17 @@ let add_malloc lenv (t, d) =
       call malloc
       (leave fun)
    *)
-  let t = enter_fun t malloc_lbl 0 in
+  let t = nop in
+  let t = t ++ enter_fun malloc_lbl 0 in
   let t = t ++ lenv.align_stack () in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rbp) !%rdi in
   let t = t ++ call "malloc" in
-  let t = leave_fun t in
-  (t, d, lenv)
+  let t = t ++ leave_fun in
+  t
 
 let puts_lbl = Label.with_prefix "boxed_puts"
 
-let add_puts lenv (t, d) =
+let add_puts lenv =
   (*
    boxed_puts:
       (enter function)
@@ -45,16 +48,17 @@ let add_puts lenv (t, d) =
       call puts
       (leave fun)
    *)
-  let t = enter_fun t puts_lbl 0 in
+  let t = nop in
+  let t = t ++ enter_fun puts_lbl 0 in
   let t = t ++ lenv.align_stack () in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rbp) !%rdi in
   let t = t ++ call "puts" in
-  let t = leave_fun t in
-  (t, d, lenv)
+  let t = t ++ leave_fun in
+  t
 
 let sprintf_lbl = Label.with_prefix "boxed_sprintf"
 
-let add_sprintf lenv (t, d) =
+let add_sprintf lenv =
   (*
    boxed_sprintf:
       (enter function)
@@ -65,18 +69,19 @@ let add_sprintf lenv (t, d) =
       call sprintf
       (leave fun)
    *)
-  let t = enter_fun t sprintf_lbl 0 in
+  let t = nop in
+  let t = t ++ enter_fun sprintf_lbl 0 in
   let t = t ++ lenv.align_stack () in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rbp) !%rdi in
   let t = t ++ movq (ind ~ofs:(3 * lenv.word_size) rbp) !%rsi in
   let t = t ++ movq (ind ~ofs:(4 * lenv.word_size) rbp) !%rdx in
   let t = t ++ call "sprintf" in
-  let t = leave_fun t in
-  (t, d, lenv)
+  let t = t ++ leave_fun in
+  t
 
 let strcmp_lbl = Label.with_prefix "boxed_strcmp"
 
-let add_strcmp lenv (t, d) =
+let add_strcmp lenv =
   (*
    boxed_strcmp:
       (enter function)
@@ -86,17 +91,18 @@ let add_strcmp lenv (t, d) =
       call strcmp
       (leave fun)
    *)
-  let t = enter_fun t strcmp_lbl 0 in
+  let t = nop in
+  let t = t ++ enter_fun strcmp_lbl 0 in
   let t = t ++ lenv.align_stack () in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rbp) !%rdi in
   let t = t ++ movq (ind ~ofs:(3 * lenv.word_size) rbp) !%rsi in
   let t = t ++ call "strcmp" in
-  let t = leave_fun t in
-  (t, d, lenv)
+  let t = t ++ leave_fun in
+  t
 
 let strconcat_lbl = Label.with_prefix "boxed_strconcat"
 
-let add_strconcat lenv (t, d) =
+let add_strconcat lenv =
   (*
     Stack (in x86_64):
               |         |
@@ -112,8 +118,7 @@ let add_strconcat lenv (t, d) =
     Registers:
       - LHS Lenght: %r13
 
-    pushq   %rbp
-    movq    %rsp, %rbp
+    (enter function)
     andq    $-16, %rsp
 
     movq    16(%rbp), %rdi
@@ -135,10 +140,11 @@ let add_strconcat lenv (t, d) =
     movq    24(%rbp), %rsi
     call    strcat
 
-    leave
+    (leave fun)
     ret
    *)
-  let t = enter_fun t strconcat_lbl (3 * lenv.word_size) in
+  let t = nop in
+  let t = t ++ enter_fun strconcat_lbl 0 in
   let t = t ++ lenv.align_stack () in
   (* Compute the length of lhs into r13 *)
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rbp) !%rdi in
@@ -160,13 +166,14 @@ let add_strconcat lenv (t, d) =
   let t = t ++ movq (ind ~ofs:(3 * lenv.word_size) rbp) !%rsi in
   let t = t ++ call "strcat" in
   (* The new string is in rax *)
-  let t = leave_fun t in
-  (t, d, lenv)
+  let t = t ++ leave_fun in
+  t
 
-let add_boxed_libc lenv (t, d) =
-  let t, d, lenv = add_malloc lenv (t, d) in
-  let t, d, lenv = add_puts lenv (t, d) in
-  let t, d, lenv = add_sprintf lenv (t, d) in
-  let t, d, lenv = add_strcmp lenv (t, d) in
-  let t, d, lenv = add_strconcat lenv (t, d) in
-  (t, d, lenv)
+let add_boxed_libc lenv =
+  let t = nop in
+  let t = t ++ add_malloc lenv in
+  let t = t ++ add_puts lenv in
+  let t = t ++ add_sprintf lenv in
+  let t = t ++ add_strcmp lenv in
+  let t = t ++ add_strconcat lenv in
+  t

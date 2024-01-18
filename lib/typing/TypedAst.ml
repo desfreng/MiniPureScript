@@ -125,7 +125,7 @@ type resolved_instance =
     TLocalInstance of Instance.t
   | (* This refers an instance defined in the global environment. *)
     TGlobalInstance of Schema.t
-  | (* This refers a schema instancied with the following instance arguments. *)
+  | (* This refers a schema instanced with the following instance arguments. *)
     TGlobalSchema of (Schema.t * resolved_instance list * int)
 
 module SMap = Map.Make (String)
@@ -160,7 +160,7 @@ and texpr_kind =
   | TStringCase of
       Variable.t
       * ttyp
-      * (* The variable refering to the value we need to compare to each string *)
+      * (* The variable referring to the value we need to compare to each string *)
       texpr SMap.t
       (* The expression to evaluate for each possible string *)
       * texpr
@@ -168,12 +168,12 @@ and texpr_kind =
   | TIntCase of
       Variable.t
       * ttyp
-      * (* The variable refering to the value we need to compare to each int *)
+      * (* The variable referring to the value we need to compare to each int *)
       texpr IMap.t
       (* The expression to evaluate for each possible int *)
       * texpr
   (* The expression to evaluate if no int match *)
-  | TContructorCase of
+  | TConstructorCase of
       Variable.t
       * Symbol.t
       * (* The variable containing the value for which we are looking at the constructor *)
@@ -250,10 +250,10 @@ type tfun =
   ; tfun_vars: Variable.t list (* argument of the function, in order *)
   ; tfun_insts: Instance.t list (* instance of the function, in order *)
   ; tfun_arity: int (* number of argument *)
-  ; tfun_texpr: texpr (* body of the function (None if builtins) *) }
+  ; tfun_texpr: texpr (* body of the function *) }
 
 type tschema =
-  { tschema_id: Schema.t (* id of the shema implemented *)
+  { tschema_id: Schema.t (* id of the schema implemented *)
   ; tschema_funs: tfun Function.map
         (* maps each function defined in this schema to its implementation. *)
   ; tschema_insts:

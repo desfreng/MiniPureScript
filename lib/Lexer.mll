@@ -139,33 +139,33 @@ rule gen_pretokens = parse
   | _ as c          { illegal_char c lexbuf }
 
 and multi_line_comment = parse
-| '\n'              { Lexing.new_line lexbuf; multi_line_comment lexbuf }
-| "-}"              { () }
-| eof               { () } (* To mimic the comportment of PureScript *)
-| _                 { multi_line_comment lexbuf }
+  | '\n'              { Lexing.new_line lexbuf; multi_line_comment lexbuf }
+  | "-}"              { () }
+  | eof               { () } (* To mimic the comportment of PureScript *)
+  | _                 { multi_line_comment lexbuf }
 
 and single_line_comment = parse
-| '\n'              { Lexing.new_line lexbuf }
-| _                 { single_line_comment lexbuf }
-| eof               { () }
+  | '\n'              { Lexing.new_line lexbuf }
+  | _                 { single_line_comment lexbuf }
+  | eof               { () }
 
 and string_cst = parse
-| "\\\""            { Buffer.add_char str_buf '"'; string_cst lexbuf  }
-| "\\\\"            { Buffer.add_char str_buf '\\'; string_cst lexbuf  }
-| "\\n"             { Buffer.add_char str_buf '\n'; string_cst lexbuf }
-    (* To mimic the comportment of PureScript: *)
-| '\n'              { illegal_str_lf lexbuf }
-| '\\'              { string_gap lexbuf; string_cst lexbuf }
-| '"'               { let s = Buffer.contents str_buf in
-                      Buffer.clear str_buf; s }
-| eof               { unterminated_str lexbuf }
-| _ as c            { Buffer.add_char str_buf c; string_cst lexbuf }
+  | "\\\""            { Buffer.add_char str_buf '"'; string_cst lexbuf  }
+  | "\\\\"            { Buffer.add_char str_buf '\\'; string_cst lexbuf  }
+  | "\\n"             { Buffer.add_char str_buf '\n'; string_cst lexbuf }
+      (* To mimic the comportment of PureScript: *)
+  | '\n'              { illegal_str_lf lexbuf }
+  | '\\'              { string_gap lexbuf; string_cst lexbuf }
+  | '"'               { let s = Buffer.contents str_buf in
+                        Buffer.clear str_buf; s }
+  | eof               { unterminated_str lexbuf }
+  | _ as c            { Buffer.add_char str_buf c; string_cst lexbuf }
 
 and string_gap = parse
-| '\n'              { Lexing.new_line lexbuf; string_gap lexbuf }
-| '\t' | ' '        { string_gap lexbuf }
-| '\\'              { () }
-| eof               { unterminated_str_gap lexbuf }
-| _ as c            { illegal_char_gap c lexbuf }
+  | '\n'              { Lexing.new_line lexbuf; string_gap lexbuf }
+  | '\t' | ' '        { string_gap lexbuf }
+  | '\\'              { () }
+  | eof               { unterminated_str_gap lexbuf }
+  | _ as c            { illegal_char_gap c lexbuf }
 
 { }

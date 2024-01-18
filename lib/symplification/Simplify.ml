@@ -154,7 +154,7 @@ let rec simplify_expr sigma e =
       let branchs = IMap.map (simplify_expr sigma) branchs in
       let other = simplify_expr sigma other in
       mk_int_case typ var var_typ branchs other
-  | TContructorCase (var, symb, branchs, other) ->
+  | TConstructorCase (var, symb, branchs, other) ->
       let var =
         match subst sigma var with
         | Either.Left v ->
@@ -166,7 +166,7 @@ let rec simplify_expr sigma e =
       in
       let branchs = Constructor.Map.map (simplify_expr sigma) branchs in
       let other = Option.map (simplify_expr sigma) other in
-      mk_sexpr typ (SContructorCase (var, symb, branchs, other))
+      mk_sexpr typ (SConstructorCase (var, symb, branchs, other))
   | TGetField (var, f) ->
       let var =
         match subst sigma var with
@@ -192,12 +192,12 @@ let simplfy_fun tfun =
   ; sfun_vars= tfun.tfun_vars
   ; sfun_insts= tfun.tfun_insts }
 
-let simplify_schema tshema =
-  let sschema_funs = Function.Map.map simplfy_fun tshema.tschema_funs in
-  { sschema_id= tshema.tschema_id
+let simplify_schema tschema =
+  let sschema_funs = Function.Map.map simplfy_fun tschema.tschema_funs in
+  { sschema_id= tschema.tschema_id
   ; sschema_funs
-  ; sschema_insts= tshema.tschema_insts
-  ; sschema_nb_funs= tshema.tschema_nb_funs }
+  ; sschema_insts= tschema.tschema_insts
+  ; sschema_nb_funs= tschema.tschema_nb_funs }
 
 let simplify_program p =
   let sfuns = Function.Map.map simplfy_fun p.tfuns in

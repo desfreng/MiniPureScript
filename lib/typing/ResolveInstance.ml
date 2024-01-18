@@ -31,7 +31,7 @@ let resolve_local_inst lenv (to_res_cls, to_res_args) =
   (* We check if [inst] is in the local env *)
   match TypeClass.Map.find_opt to_res_cls lenv.instances with
   | Some l -> (
-    (* l is the list of all instances of typeclass [to_res_cls] in the local
+    (* l is the list of all instances of type-class [to_res_cls] in the local
        environment. *)
     try
       List.iter

@@ -130,7 +130,7 @@ let rec pp_res_inst ppf = function
       fprintf ppf "(Instance %a)" Schema.pp s
   | TGlobalSchema (s, args, _) ->
       fprintf ppf "@[<hv 2>(Schema %a" Schema.pp s ;
-      List.iter (fprintf ppf "@;%a" pp_res_inst) args ;
+      List.iter (fprintf ppf "@,%a" pp_res_inst) args ;
       fprintf ppf ")@]"
 
 let rec pp_texpr ppf e =
@@ -140,17 +140,17 @@ let rec pp_texpr ppf e =
   | TVariable v ->
       fprintf ppf "@[<hv 2>(Variable %a)@]" Variable.pp v
   | TNeg x ->
-      fprintf ppf "@[<hv 2>(neg@;%a)@]" pp_texpr x
+      fprintf ppf "@[<hv 2>(neg@,%a)@]" pp_texpr x
   | TBinOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_binop op pp_texpr lhs pp_texpr rhs
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_binop op pp_texpr lhs pp_texpr rhs
   | TRegularFunApp (f, insts, args) ->
       fprintf ppf "@[<hv 2>(%a" Function.pp f ;
-      List.iter (fun i -> fprintf ppf "@;%a" pp_res_inst (Lazy.force i)) insts ;
-      List.iter (fprintf ppf "@;%a" pp_texpr) args ;
+      List.iter (fun i -> fprintf ppf "@,%a" pp_res_inst (Lazy.force i)) insts ;
+      List.iter (fprintf ppf "@,%a" pp_texpr) args ;
       fprintf ppf ") @]"
   | TTypeClassFunApp (i, f, args) ->
       fprintf ppf "@[<hv 2>(%a.%a" pp_res_inst (Lazy.force i) Function.pp f ;
-      List.iter (fprintf ppf "@;%a" pp_texpr) args ;
+      List.iter (fprintf ppf "@,%a" pp_texpr) args ;
       fprintf ppf ")@]"
   | TConstructor (cstr, args) -> (
     match args with
@@ -158,45 +158,45 @@ let rec pp_texpr ppf e =
         Constructor.pp ppf cstr
     | args ->
         fprintf ppf "@[<hv 2>(%a" Constructor.pp cstr ;
-        List.iter (fprintf ppf "@;%a" pp_texpr) args ;
+        List.iter (fprintf ppf "@,%a" pp_texpr) args ;
         fprintf ppf ")@]" )
   | TIf (cd, tb, fb) ->
-      fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_texpr cd pp_texpr
+      fprintf ppf "@[<hv 2>(if@ %a@,then@ %a@,else@ %a)@]" pp_texpr cd pp_texpr
         tb pp_texpr fb
   | TBlock l ->
       fprintf ppf "@[<hv 2>(do" ;
-      List.iter (fprintf ppf "@;%a" pp_texpr) l ;
+      List.iter (fprintf ppf "@,%a" pp_texpr) l ;
       fprintf ppf ")@]"
   | TLet (v, b, e) ->
-      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
+      fprintf ppf "@[<hv 2>(let@,@[<hv 2>(%a = %a)@]@,in %a)@]" Variable.pp v
         pp_texpr b pp_texpr e
   | TBind (v, v', e) ->
-      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
+      fprintf ppf "@[<hv 2>(let@,@[<hv 2>(%a = %a)@]@,in %a)@]" Variable.pp v
         Variable.pp v' pp_texpr e
   | TStringCase (v, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
       SMap.iter
-        (fun c expr -> fprintf ppf "@[<hv 2>(%s =>@;%a)@]@," c pp_texpr expr)
+        (fun c expr -> fprintf ppf "@[<hv 2>(%s =>@,%a)@]@," c pp_texpr expr)
         c ;
-      fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o ;
+      fprintf ppf "@[<hv 2>_ =>@,%a@]" pp_texpr o ;
       fprintf ppf ")@]"
   | TIntCase (v, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
       IMap.iter
-        (fun c expr -> fprintf ppf "@[<hv 2>(%d =>@;%a)@]@," c pp_texpr expr)
+        (fun c expr -> fprintf ppf "@[<hv 2>(%d =>@,%a)@]@," c pp_texpr expr)
         c ;
-      fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o ;
+      fprintf ppf "@[<hv 2>_ =>@,%a@]" pp_texpr o ;
       fprintf ppf ")@]"
-  | TContructorCase (v, _, c, o) ->
+  | TConstructorCase (v, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp v ;
       Constructor.Map.iter
         (fun c expr ->
-          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_texpr expr
+          fprintf ppf "@[<hv 2>(%a =>@,%a)@]@," Constructor.pp c pp_texpr expr
           )
         c ;
       ( match o with
       | Some o ->
-          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_texpr o
+          fprintf ppf "@[<hv 2>_ =>@,%a@]" pp_texpr o
       | None ->
           () ) ;
       fprintf ppf ")@]"
@@ -324,7 +324,7 @@ let rec pp_alloc_inst ppf = function
   | AGlobalInst s ->
       Schema.pp ppf s
   | AGlobalSchema (s, args, _) ->
-      fprintf ppf "(@[%a@;with%a@])" Schema.pp s
+      fprintf ppf "(@[%a@,with%a@])" Schema.pp s
         (pp_print_list pp_alloc_inst)
         args
 
@@ -335,70 +335,70 @@ let rec pp_aexpr ppf aexpr =
   | AVariable v ->
       fprintf ppf "@[<hv 2>(Variable %a)@]" pp_var_pos v
   | ANeg x ->
-      fprintf ppf "@[<hv 2>(neg@;%a)@]" pp_aexpr x
+      fprintf ppf "@[<hv 2>(neg@,%a)@]" pp_aexpr x
   | ANot x ->
-      fprintf ppf "@[<hv 2>(not@;%a)@]" pp_aexpr x
+      fprintf ppf "@[<hv 2>(not@,%a)@]" pp_aexpr x
   | AArithOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_arith_op op pp_aexpr lhs pp_aexpr
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_arith_op op pp_aexpr lhs pp_aexpr
         rhs
   | ABooleanOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_bool_op op pp_aexpr lhs pp_aexpr
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_bool_op op pp_aexpr lhs pp_aexpr
         rhs
   | ACompare (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_compare_op op pp_aexpr lhs
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_compare_op op pp_aexpr lhs
         pp_aexpr rhs
   | AStringConcat (lhs, rhs) ->
-      fprintf ppf "@[<hv 2>(concat@;%a@;%a)@]" pp_aexpr lhs pp_aexpr rhs
+      fprintf ppf "@[<hv 2>(concat@,%a@,%a)@]" pp_aexpr lhs pp_aexpr rhs
   | AFunctionCall (f, insts, args) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" Function.pp f
         (pp_print_list pp_alloc_inst)
         insts (pp_print_list pp_aexpr) args
   | AInstanceCall (i, f, args) ->
-      fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_alloc_inst i Function.pp f
+      fprintf ppf "@[<hv 2>(%a.%a@,%a)@]" pp_alloc_inst i Function.pp f
         (pp_print_list pp_aexpr) args
   | AConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
-        fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
+        fprintf ppf "@[<hv 2>(%a@,%a)@]" Constructor.pp cstr
           (pp_print_list pp_aexpr) args )
   | AIf (cd, tb, fb) ->
-      fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_aexpr cd pp_aexpr
+      fprintf ppf "@[<hv 2>(if@ %a@,then@ %a@,else@ %a)@]" pp_aexpr cd pp_aexpr
         tb pp_aexpr fb
   | ALocalClosure (l, vars, instl, _) ->
-      fprintf ppf "@[<hv 2>(closure of@;@[%a@]@;with@;%a@;and@;%a)@]" Label.pp l
+      fprintf ppf "@[<hv 2>(closure of@,@[%a@]@,with@,%a@,and@,%a)@]" Label.pp l
         (pp_print_list pp_inst_pos)
         instl (pp_print_list pp_var_pos) vars
   | ADoEffect e ->
-      fprintf ppf "@[<hv 2>(call closure@;%a)@]" pp_aexpr e
+      fprintf ppf "@[<hv 2>(call closure@,%a)@]" pp_aexpr e
   | ALet (v_pos, b, e) ->
-      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%i(%%rbp) = %a)@]@;in %a)@]" v_pos
+      fprintf ppf "@[<hv 2>(let@,@[<hv 2>(%i(%%rbp) = %a)@]@,in %a)@]" v_pos
         pp_aexpr b pp_aexpr e
   | AStringCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %s@;\
-         @[lower@ %a@]@;\
-         @[equal@ %a@]@;\
+        "@[<hv 2>(compare@ %a@ with@ %s@,\
+         @[lower@ %a@]@,\
+         @[equal@ %a@]@,\
          @[greater@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
         d.equal pp_aexpr d.greater
   | AIntCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %i@;\
-         @[lower@ %a@]@;\
-         @[equal@ %a@]@;\
+        "@[<hv 2>(compare@ %a@ with@ %i@,\
+         @[lower@ %a@]@,\
+         @[equal@ %a@]@,\
          @[greater@ %a@])@]" pp_var_pos d.var d.cst pp_aexpr d.lower pp_aexpr
         d.equal pp_aexpr d.greater
-  | AContructorCase (e, _, c, o) ->
+  | AConstructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," pp_var_pos e ;
       Constructor.Map.iter
         (fun c expr ->
-          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_aexpr expr
+          fprintf ppf "@[<hv 2>(%a =>@,%a)@]@," Constructor.pp c pp_aexpr expr
           )
         c ;
       ( match o with
       | Some o ->
-          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_aexpr o
+          fprintf ppf "@[<hv 2>_ =>@,%a@]" pp_aexpr o
       | None ->
           () ) ;
       fprintf ppf ")@]"
@@ -452,66 +452,66 @@ let rec pp_sexpr ppf sexpr =
   | SVariable v ->
       fprintf ppf "@[<hv 2>(Variable %a)@]" Variable.pp v
   | SNeg x ->
-      fprintf ppf "@[<hv 2>(neg@;%a)@]" pp_sexpr x
+      fprintf ppf "@[<hv 2>(neg@,%a)@]" pp_sexpr x
   | SNot x ->
-      fprintf ppf "@[<hv 2>(not@;%a)@]" pp_sexpr x
+      fprintf ppf "@[<hv 2>(not@,%a)@]" pp_sexpr x
   | SArithOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_arith_op op pp_sexpr lhs pp_sexpr
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_arith_op op pp_sexpr lhs pp_sexpr
         rhs
   | SBooleanOp (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_bool_op op pp_sexpr lhs pp_sexpr
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_bool_op op pp_sexpr lhs pp_sexpr
         rhs
   | SCompare (lhs, op, rhs) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" pp_compare_op op pp_sexpr lhs
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" pp_compare_op op pp_sexpr lhs
         pp_sexpr rhs
   | SStringConcat (lhs, rhs) ->
-      fprintf ppf "@[<hv 2>(concat@;%a@;%a)@]" pp_sexpr lhs pp_sexpr rhs
+      fprintf ppf "@[<hv 2>(concat@,%a@,%a)@]" pp_sexpr lhs pp_sexpr rhs
   | SFunctionCall (f, insts, args) ->
-      fprintf ppf "@[<hv 2>(%a@;%a@;%a)@]" Function.pp f
+      fprintf ppf "@[<hv 2>(%a@,%a@,%a)@]" Function.pp f
         (pp_print_list pp_res_inst)
         insts (pp_print_list pp_sexpr) args
   | SInstanceCall (i, f, args) ->
-      fprintf ppf "@[<hv 2>(%a.%a@;%a)@]" pp_res_inst i Function.pp f
+      fprintf ppf "@[<hv 2>(%a.%a@,%a)@]" pp_res_inst i Function.pp f
         (pp_print_list pp_sexpr) args
   | SConstructor (cstr, args) -> (
     match args with
     | [] ->
         Constructor.pp ppf cstr
     | args ->
-        fprintf ppf "@[<hv 2>(%a@;%a)@]" Constructor.pp cstr
+        fprintf ppf "@[<hv 2>(%a@,%a)@]" Constructor.pp cstr
           (pp_print_list pp_sexpr) args )
   | SIf (cd, tb, fb) ->
-      fprintf ppf "@[<hv 2>(if@ %a@;then@ %a@;else@ %a)@]" pp_sexpr cd pp_sexpr
+      fprintf ppf "@[<hv 2>(if@ %a@,then@ %a@,else@ %a)@]" pp_sexpr cd pp_sexpr
         tb pp_sexpr fb
   | SBlock l ->
       fprintf ppf "@[<hv 2>(do@.%a)@]" (pp_print_list pp_sexpr) l
   | SLet (v, b, e) ->
-      fprintf ppf "@[<hv 2>(let@;@[<hv 2>(%a = %a)@]@;in %a)@]" Variable.pp v
+      fprintf ppf "@[<hv 2>(let@,@[<hv 2>(%a = %a)@]@,in %a)@]" Variable.pp v
         pp_sexpr b pp_sexpr e
   | SStringCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %s@;\
-         @[lower@ %a@]@;\
-         @[equal@ %a@]@;\
+        "@[<hv 2>(compare@ %a@ with@ %s@,\
+         @[lower@ %a@]@,\
+         @[equal@ %a@]@,\
          @[greater@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
         d.equal pp_sexpr d.greater
   | SIntCompareAndBranch d ->
       fprintf ppf
-        "@[<hv 2>(compare@ %a@ with@ %i@;\
-         @[lower@ %a@]@;\
-         @[equal@ %a@]@;\
+        "@[<hv 2>(compare@ %a@ with@ %i@,\
+         @[lower@ %a@]@,\
+         @[equal@ %a@]@,\
          @[greater@ %a@])@]" Variable.pp d.var d.cst pp_sexpr d.lower pp_sexpr
         d.equal pp_sexpr d.greater
-  | SContructorCase (e, _, c, o) ->
+  | SConstructorCase (e, _, c, o) ->
       fprintf ppf "@[<hv 2>(match %a@," Variable.pp e ;
       Constructor.Map.iter
         (fun c expr ->
-          fprintf ppf "@[<hv 2>(%a =>@;%a)@]@," Constructor.pp c pp_sexpr expr
+          fprintf ppf "@[<hv 2>(%a =>@,%a)@]@," Constructor.pp c pp_sexpr expr
           )
         c ;
       ( match o with
       | Some o ->
-          fprintf ppf "@[<hv 2>_ =>@;%a@]" pp_sexpr o
+          fprintf ppf "@[<hv 2>_ =>@,%a@]" pp_sexpr o
       | None ->
           () ) ;
       fprintf ppf ")@]"

@@ -3,59 +3,89 @@ open CompileLibC
 open AllocAst
 open X86_64
 
-(** [load_constant lenv asm c dest] : load the value of the constant [c] in [dest]. *)
-let load_constant lenv (t, d) constant dest =
+module DataHandler : sig
+  val add_string : string -> Label.label
+
+  val add_address : label option -> label list -> Label.label
+
+  val declared_data : unit -> [`data] asm
+end = struct
+  let data = ref nop
+
+  let str_to_lbl = Hashtbl.create 17
+
+  let add_string s =
+    match Hashtbl.find_opt str_to_lbl s with
+    | Some lbl ->
+        lbl
+    | None ->
+        let str_lbl = Label.string_lbl () in
+        let () = Hashtbl.add str_to_lbl s str_lbl in
+        str_lbl
+
+  let add_address lbl addrs =
+    let addrs_lbl = match lbl with Some lbl -> lbl | None -> jmp_lbl () in
+    data := !data ++ label addrs_lbl ++ address addrs ;
+    addrs_lbl
+
+  let declared_data () =
+    Hashtbl.fold
+      (fun str lbl asm -> asm ++ label lbl ++ string str)
+      str_to_lbl !data
+end
+
+(** [load_constant c dest] : load the value of the constant [c] in [dest]. *)
+let load_constant constant dest =
   match constant with
   | Constant.Unit ->
-      (t, d, lenv)
+      nop
   | Bool true ->
-      (t ++ movq (imm 1) dest, d, lenv)
+      movq (imm 1) dest
   | Bool false ->
-      (t ++ movq (imm 0) dest, d, lenv)
+      movq (imm 0) dest
   | Int i ->
-      (t ++ movq (imm i) dest, d, lenv)
+      movq (imm i) dest
   | String txt ->
-      let str_label = string_lbl () in
-      (t ++ movq (ilab str_label) dest, d ++ label str_label ++ string txt, lenv)
+      let str_label = DataHandler.add_string txt in
+      movq (ilab str_label) dest
 
-(** [load_var lenv asm var_pos dest] : load the value at [var_pos] in [dest]. *)
-let load_var lenv (t, d) var_loc dest =
+(** [load_var var_pos dest] : load the value at [var_pos] in [dest]. *)
+let load_var var_loc dest =
   match var_loc with
   | AStackVar i ->
-      (t ++ movq (ind ~ofs:i rbp) !%dest, d, lenv)
+      movq (ind ~ofs:i rbp) !%dest
   | AClosVar i ->
-      (t ++ movq (ind ~ofs:i r12) !%dest, d, lenv)
+      movq (ind ~ofs:i r12) !%dest
 
 (** [load_inst lenv asm inst_loc dest] : load the instance at [inst_loc] in [dest].
     register modified: [dest] only *)
-let load_inst lenv (t, d) inst_loc dest =
+let load_inst inst_loc dest =
   match inst_loc with
   | AStackInst i ->
-      (t ++ movq (ind ~ofs:i rbp) !%dest, d, lenv)
+      movq (ind ~ofs:i rbp) !%dest
   | AClosInst i ->
-      (t ++ movq (ind ~ofs:i r12) !%dest, d, lenv)
+      movq (ind ~ofs:i r12) !%dest
   | AInstInst (i, j) ->
       (* AInstInst (i, j) ~= j(i(%rbp)) So we do :
          movq i(%rbp) dest
          movq j(dest) dest *)
-      ( t ++ movq (ind ~ofs:i rbp) !%dest ++ movq (ind ~ofs:j dest) !%dest
-      , d
-      , lenv )
+      movq (ind ~ofs:i rbp) !%dest ++ movq (ind ~ofs:j dest) !%dest
 
-let compile_get_field lenv (t, d) v_pos index =
+let compile_get_field lenv v_pos index =
   (*
       value(v_pos) -> %rax
       movq [(1 + index) * word_size](%rax) %rax
   *)
-  let t, d, lenv = load_var lenv (t, d) v_pos rax in
+  let t = nop in
+  let t = t ++ load_var v_pos rax in
   let t = t ++ movq (ind ~ofs:((1 + index) * lenv.word_size) rax) !%rax in
-  (t, d, lenv)
+  t
 
 let popnq lenv nb_word =
   let stack_offset = nb_word * lenv.word_size in
   addq (imm stack_offset) !%rsp
 
-let add_pure lenv (t, d) =
+let add_pure lenv =
   (* Pure x return the closure of the identity function:
 
      pure_clos:
@@ -73,6 +103,7 @@ let add_pure lenv (t, d) =
   *)
   let pure_lbl, pure_clos = (function_lbl pure_fid None, local_lbl pure_fid) in
   (* pure closure :*)
+  let t = nop in
   let t = t ++ label pure_clos in
   let t = t ++ movq (ind ~ofs:lenv.word_size r12) !%rax in
   let t = t ++ ret in
@@ -89,9 +120,9 @@ let add_pure lenv (t, d) =
   let lenv =
     {lenv with funs_lbl= Function.Map.add pure_fid pure_lbl lenv.funs_lbl}
   in
-  (t, d, lenv)
+  (t, lenv)
 
-let add_log lenv (t, d) =
+let add_log lenv =
   (*
      log_clos:
        pushq 8(%r12)
@@ -109,6 +140,7 @@ let add_log lenv (t, d) =
        ret
   *)
   let log_lbl, log_clos = (function_lbl log_fid None, local_lbl log_fid) in
+  let t = nop in
   (* pure closure *)
   let t = t ++ label log_clos in
   let t = t ++ pushq (ind ~ofs:lenv.word_size r12) in
@@ -128,9 +160,9 @@ let add_log lenv (t, d) =
   let lenv =
     {lenv with funs_lbl= Function.Map.add log_fid log_lbl lenv.funs_lbl}
   in
-  (t, d, lenv)
+  (t, lenv)
 
-let add_show_int lenv (t, d) =
+let add_show_int lenv =
   (* A 64bit integer signed cannot take more than 20 characters when converted in decimal.
 
          .text
@@ -153,17 +185,17 @@ let add_show_int lenv (t, d) =
      format:
          .string "%ld"
   *)
-  let format_str = string_lbl () in
-  let d = d ++ label format_str ++ string "%ld" in
+  let fmt_lbl = DataHandler.add_string "%ld" in
   let show_int = schema_lbl show_int_sid in
   let show_int_f = function_lbl show_fid (Some show_int) in
-  let d = d ++ label show_int ++ address [show_int_f] in
+  let show_int = DataHandler.add_address (Some show_int) [show_int_f] in
+  let t = nop in
   let t = t ++ label show_int_f in
   let t = t ++ pushq (imm 20) in
   let t = t ++ call malloc_lbl in
   let t = t ++ popnq lenv 1 in
   let t = t ++ pushq (ind ~ofs:lenv.word_size rsp) in
-  let t = t ++ pushq (ilab format_str) in
+  let t = t ++ pushq (ilab fmt_lbl) in
   let t = t ++ pushq !%rax in
   let t = t ++ call sprintf_lbl in
   let t = t ++ popq rax in
@@ -172,9 +204,9 @@ let add_show_int lenv (t, d) =
   let lenv =
     {lenv with schema_lbl= Schema.Map.add show_int_sid show_int lenv.schema_lbl}
   in
-  (t, d, lenv)
+  (t, lenv)
 
-let add_show_bool lenv (t, d) =
+let add_show_bool lenv =
   (*
          .text
      show_bool_f: <- This is the function in the instance
@@ -196,15 +228,14 @@ let add_show_bool lenv (t, d) =
      false:
          .string "false"
    *)
-  let true_str, false_str = (string_lbl (), string_lbl ()) in
-  let d =
-    d ++ label true_str ++ string "true" ++ label false_str ++ string "false"
-  in
+  let true_str = DataHandler.add_string "true" in
+  let false_str = DataHandler.add_string "false" in
   let show_bool = schema_lbl show_bool_sid in
   let sbool_fun, show_false_lbl =
     (function_lbl show_fid (Some show_bool), code_lbl ())
   in
-  let d = d ++ label show_bool ++ address [sbool_fun] in
+  let show_bool = DataHandler.add_address (Some show_bool) [sbool_fun] in
+  let t = nop in
   let t = t ++ label sbool_fun in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rax in
   let t = t ++ testq !%rax !%rax in
@@ -218,19 +249,20 @@ let add_show_bool lenv (t, d) =
     { lenv with
       schema_lbl= Schema.Map.add show_bool_sid show_bool lenv.schema_lbl }
   in
-  (t, d, lenv)
+  (t, lenv)
 
 let div_lbl = Label.with_prefix "boxed_div"
 
 (** Because the code for the division is quite long, we box it into a assembly
     function *)
-let add_div lenv (t, d) =
-  (* - lhs is at 8(%rsp) (we dont make an activation frame, not needed here)
+let add_div lenv =
+  (* - lhs is at 8(%rsp) (we don't make an activation frame, not needed here)
      - rhs is at 16(%rsp)
 
      The remainder is positive in PureScript, so we tweak the result of the
      division to keep the euclidean division properties. *)
   let div_end, rhs_neg = (Label.code_lbl (), Label.code_lbl ()) in
+  let t = nop in
   let t = t ++ label div_lbl in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax in
   (* if rhs = 0, return 0 because x/0 = 0 in PureScript... *)
@@ -258,16 +290,17 @@ let add_div lenv (t, d) =
   (* returns the result *)
   let t = t ++ label div_end in
   let t = t ++ ret in
-  (t, d, lenv)
+  (t, lenv)
 
-let add_mod lenv (t, d) =
-  (* - lhs is at 8(%rsp) (we dont make an activation frame, not needed here)
+let add_mod lenv =
+  (* - lhs is at 8(%rsp) (we don't make an activation frame, not needed here)
      - rhs is at 16(%rsp)
 
      The remainder is positive in PureScript, so we tweak the result of the
      division to keep the euclidean division properties. *)
   let mod_fun = function_lbl mod_fid None in
   let mod_end, rhs_neg = (code_lbl (), code_lbl ()) in
+  let t = nop in
   let t = t ++ label mod_fun in
   let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax in
   (* if rhs = 0, return 0 because x % 0 = 0 in PureScript... *)
@@ -300,14 +333,32 @@ let add_mod lenv (t, d) =
   let lenv =
     {lenv with funs_lbl= Function.Map.add mod_fid mod_fun lenv.funs_lbl}
   in
-  (t, d, lenv)
+  (t, lenv)
 
 let add_builtins lenv =
-  let t, d = (nop, nop) in
-  let t, d, lenv = add_div lenv (t, d) in
-  let t, d, lenv = add_mod lenv (t, d) in
-  let t, d, lenv = add_pure lenv (t, d) in
-  let t, d, lenv = add_log lenv (t, d) in
-  let t, d, lenv = add_show_int lenv (t, d) in
-  let t, d, lenv = add_show_bool lenv (t, d) in
-  (t, d, lenv)
+  let t = nop in
+  let t, lenv =
+    let divt, lenv = add_div lenv in
+    (t ++ divt, lenv)
+  in
+  let t, lenv =
+    let modt, lenv = add_mod lenv in
+    (t ++ modt, lenv)
+  in
+  let t, lenv =
+    let puret, lenv = add_pure lenv in
+    (t ++ puret, lenv)
+  in
+  let t, lenv =
+    let logt, lenv = add_log lenv in
+    (t ++ logt, lenv)
+  in
+  let t, lenv =
+    let show_int_t, lenv = add_show_int lenv in
+    (t ++ show_int_t, lenv)
+  in
+  let t, lenv =
+    let show_bool_t, lenv = add_show_bool lenv in
+    (t ++ show_bool_t, lenv)
+  in
+  (t, lenv)

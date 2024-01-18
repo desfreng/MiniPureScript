@@ -153,6 +153,18 @@ let mk_not typ x =
   match x.symp_expr with
   | SConstant (Bool b) ->
       mk_const typ (Bool (not b))
+  | SCompare (lhs, Greater, rhs) ->
+      mk_le typ lhs rhs
+  | SCompare (lhs, GreaterEqual, rhs) ->
+      mk_lt typ lhs rhs
+  | SCompare (lhs, LowerEqual, rhs) ->
+      mk_gt typ lhs rhs
+  | SCompare (lhs, Lower, rhs) ->
+      mk_ge typ lhs rhs
+  | SCompare (lhs, Equal, rhs) ->
+      mk_neq typ lhs rhs
+  | SCompare (lhs, NotEqual, rhs) ->
+      mk_eq typ lhs rhs
   | _ ->
       mk_sexpr typ (SNot x)
 

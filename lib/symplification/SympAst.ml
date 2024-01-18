@@ -16,7 +16,7 @@ and symp_expr_kind =
   | SNot of symp_expr (* The boolean negation of an expression *)
   | SArithOp of symp_expr * arith_op * symp_expr (* An arithmetic operation *)
   | SBooleanOp of symp_expr * bool_op * symp_expr (* A boolean operation *)
-  | SCompare of symp_expr * comp_op * symp_expr (* A comparaison *)
+  | SCompare of symp_expr * comp_op * symp_expr (* A comparison *)
   | SStringConcat of
       symp_expr * symp_expr (* The concatenation of two strings *)
   | SFunctionCall of
@@ -29,27 +29,27 @@ and symp_expr_kind =
       * Function.t (* the function id *)
       * symp_expr list (* the list of arguments *)
   | SConstructor of Constructor.t * symp_expr list (* Constructor application *)
-  | SIf of symp_expr * symp_expr * symp_expr (* A conditional branchment *)
+  | SIf of symp_expr * symp_expr * symp_expr (* A conditional branching *)
   | SBlock of symp_expr list (* A block of effect *)
   | SLet of Variable.t * symp_expr * symp_expr (* Definition of a variable *)
   | SIntCompareAndBranch of
       { var: Variable.t
-            (** The variable refering to value filtered by the constants *)
+            (** The variable referring to value filtered by the constants *)
       ; cst: int  (** The constant we compare the expression *)
       ; lower: symp_expr  (** if expr < const, we execute this branch *)
       ; equal: symp_expr  (** if expr = const, we execute this branch *)
       ; greater: symp_expr  (** if expr > const, we execute this branch *) }
   | SStringCompareAndBranch of
       { var: Variable.t
-            (** The variable refering to value filtered by the constants *)
+            (** The variable referring to value filtered by the constants *)
       ; cst: string  (** The constant we compare the expression *)
       ; lower: symp_expr  (** if expr < const, we execute this branch *)
       ; equal: symp_expr  (** if expr = const, we execute this branch *)
       ; greater: symp_expr  (** if expr > const, we execute this branch *) }
-  | SContructorCase of
+  | SConstructorCase of
       Variable.t
       * Symbol.t
-        (* The variable refering to value filtered by the constructors *)
+        (* The variable referring to value filtered by the constructors *)
       * symp_expr Constructor.map
       (* The expression to evaluate for each possible constructor *)
       * symp_expr option
@@ -66,12 +66,13 @@ type sfun =
   ; sfun_body: symp_expr (* body of the function *) }
 
 type sschema =
-  { sschema_id: Schema.t (* id of the shema implemented *)
+  { sschema_id: Schema.t (* id of the schema implemented *)
   ; sschema_funs: sfun Function.map
         (* maps each function defined in this schema to its allocated implementation. *)
   ; sschema_insts:
       Instance.t list (* instance required by tge schema, in order *)
-  ; sschema_nb_funs: int (* The numer of function defined in this instance *) }
+  ; sschema_nb_funs: int (* The number of function defined in this instance *)
+  }
 
 type sprogram =
   { sfuns: sfun Function.map

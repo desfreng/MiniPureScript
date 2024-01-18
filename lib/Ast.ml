@@ -35,7 +35,7 @@ type expr = expr_kind pos
 and expr_kind =
   | ExprConstant of constant (* constant *)
   | ExprVar of string (* A variable value *)
-  | WithType of expr * typ (* annoted expression *)
+  | WithType of expr * typ (* annotated expression *)
   | Neg of expr (* Unary negation *)
   | BinOp of expr * binop * expr (* binary op *)
   | AppFun of string (* Function name *) * expr list (* args of function call *)
@@ -67,7 +67,8 @@ and decl_kind =
   | Data of
       string (* data name *)
       * string list (* data args *)
-      * (string * typ list) list (* list of (Construtor Name, Args type list) *)
+      * (string * typ list) list
+    (* list of (Constructor Name, Args type list) *)
   | Class of
       string (* class name *)
       * string list (* class args *)

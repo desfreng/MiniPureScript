@@ -1,5 +1,5 @@
 (* We use functor when multiple module are implemented in the same way because
-   we do not want any sharing between them (the hashtable MUST be discinct). *)
+   we do not want any sharing between them (the hashtable MUST be distinct). *)
 
 module SMap = Map.Make (String)
 module SSet = Set.Make (String)

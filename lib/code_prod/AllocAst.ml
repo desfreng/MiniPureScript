@@ -41,7 +41,7 @@ and alloc_expr_kind =
   | ANot of alloc_expr (* The boolean negation of an expression *)
   | AArithOp of alloc_expr * arith_op * alloc_expr (* An arithmetic operation *)
   | ABooleanOp of alloc_expr * bool_op * alloc_expr (* A boolean operation *)
-  | ACompare of alloc_expr * comp_op * alloc_expr (* A comparaison *)
+  | ACompare of alloc_expr * comp_op * alloc_expr (* A comparison *)
   | AStringConcat of
       alloc_expr * alloc_expr (* The concatenation of two strings *)
   | (* "Regular" Function application *)
@@ -56,26 +56,26 @@ and alloc_expr_kind =
       * alloc_expr list (* the list of argument *)
   | AConstructor of
       Constructor.t * alloc_expr list (* Constructor application *)
-  | AIf of alloc_expr * alloc_expr * alloc_expr (* A conditional branchment *)
+  | AIf of alloc_expr * alloc_expr * alloc_expr (* A conditional branching *)
   | ALocalClosure of label * var_pos list * inst_pos list * int
   | ADoEffect of alloc_expr
   | ALet of int * alloc_expr * alloc_expr (* Definition of a variable *)
   | AIntCompareAndBranch of
       { var: var_pos
-            (** The variable refering to value filtered by the constants *)
+            (** The variable referring to value filtered by the constants *)
       ; cst: int  (** The constant we compare the expression *)
       ; lower: alloc_expr  (** if expr < const, we execute this branch *)
       ; equal: alloc_expr  (** if expr = const, we execute this branch *)
       ; greater: alloc_expr  (** if expr > const, we execute this branch *) }
   | AStringCompareAndBranch of
       { var: var_pos
-            (** The variable refering to value filtered by the constants *)
+            (** The variable referring to value filtered by the constants *)
       ; cst: string  (** The constant we compare the expression *)
       ; lower: alloc_expr  (** if expr < const, we execute this branch *)
       ; equal: alloc_expr  (** if expr = const, we execute this branch *)
       ; greater: alloc_expr  (** if expr > const, we execute this branch *) }
-  | AContructorCase of
-      var_pos (* The variable refering to value filtered by the constructors *)
+  | AConstructorCase of
+      var_pos (* The variable referring to value filtered by the constructors *)
       * Symbol.t
       * alloc_expr Constructor.map
       (* The expression to evaluate for each possible constructor *)
@@ -103,7 +103,7 @@ type afun =
            a side effect closure. *) }
 
 type aschema =
-  { aschema_id: Schema.t (* id of the shema implemented *)
+  { aschema_id: Schema.t (* id of the schema implemented *)
   ; aschema_funs: afun Function.map
         (* maps each function defined in this schema to its allocated implementation. *)
   ; aschema_label: label Function.map
