@@ -117,3 +117,11 @@ type aprogram =
   ; aschemas: aschema Schema.map (* maps each schema to its implementation *)
   ; aprog_genv: global_env (* The resulting typing environment. *)
   ; aprog_main: Function.t (* id of the program entry point. *) }
+
+type 'a compile_env =
+  { schema_lbl: label Schema.map
+  ; funs_lbl: label Function.map
+  ; constrs: Constructor.set Symbol.map
+  ; schemas: schema Schema.map
+  ; word_size: int
+  ; align_stack: unit -> 'a }

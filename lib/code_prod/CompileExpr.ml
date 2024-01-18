@@ -1,8 +1,11 @@
+open AllocAst
+open X86_64
 open DefaultTypingEnv
-open X86CompileUtils
-open X86CompileInt
-open X86CompileBoolean
-open X86CompileString
+open CompileUtils
+open CompileInt
+open CompileBoolean
+open CompileString
+open CompileLibC
 
 let rec compile_inst lenv (t, d) = function
   | ALocalInst i ->
@@ -11,19 +14,16 @@ let rec compile_inst lenv (t, d) = function
       let t = t ++ movq (ilab (Schema.Map.find sid lenv.schema_lbl)) !%rax in
       (t, d, lenv)
   | AGlobalSchema (sid, args, arity) ->
-      let t, align_data, lenv = align_stack lenv t arity in
       let t, d, lenv =
         List.fold_left
           (fun (t, d, lenv) i ->
             let t, d, lenv = compile_inst lenv (t, d) i in
-            let t, lenv = pushq lenv t !%rax in
+            let t = t ++ pushq !%rax in
             (t, d, lenv) )
           (t, d, lenv) (List.rev args)
       in
-      assert (lenv.is_aligned lenv.stack_pos) ;
       let t = t ++ call (Schema.Map.find sid lenv.schema_lbl) in
-      let t, lenv = popqn lenv t arity in
-      let t, lenv = restore_stack lenv t align_data in
+      let t = t ++ popnq lenv arity in
       (t, d, lenv)
 
 let rec compile_equalities lenv asm lhs op rhs =
@@ -46,7 +46,8 @@ let rec compile_equalities lenv asm lhs op rhs =
     | _ ->
         (* Impossible, thanks to compile_aexpr *)
         assert false
-  else failwith "Not Implemented"
+  else (* prevented by the typing *)
+    assert false
 
 and compile_int_compare lenv asm lhs op rhs =
   match op with
@@ -98,12 +99,11 @@ and compile_fun_call lenv (t, d) fid intls args =
    *)
   let fun_lbl = Function.Map.find fid lenv.funs_lbl in
   let nb_push = List.length intls + List.length args in
-  let t, align_data, lenv = align_stack lenv t nb_push in
   let t, d, lenv =
     List.fold_left
       (fun (t, d, lenv) i ->
         let t, d, lenv = compile_inst lenv (t, d) i in
-        let t, lenv = pushq lenv t !%rax in
+        let t = t ++ pushq !%rax in
         (t, d, lenv) )
       (t, d, lenv) (List.rev intls)
   in
@@ -111,14 +111,12 @@ and compile_fun_call lenv (t, d) fid intls args =
     List.fold_left
       (fun (t, d, lenv) arg ->
         let t, d, lenv = compile_aexpr lenv (t, d) arg in
-        let t, lenv = pushq lenv t !%rax in
+        let t = t ++ pushq !%rax in
         (t, d, lenv) )
       (t, d, lenv) (List.rev args)
   in
-  assert (lenv.is_aligned lenv.stack_pos) ;
   let t = t ++ call fun_lbl in
-  let t, lenv = popqn lenv t nb_push in
-  let t, lenv = restore_stack lenv t align_data in
+  let t = t ++ popnq lenv nb_push in
   (t, d, lenv)
 
 and compile_inst_call lenv (t, d) inst fid args =
@@ -140,27 +138,26 @@ and compile_inst_call lenv (t, d) inst fid args =
   let fid_in_call = Option.get @@ Function.index_in_class fid in
   let nb_args = List.length args in
   let nb_push = 1 + nb_args in
-  let t, align_data, lenv = align_stack lenv t nb_push in
   let t, d, lenv = compile_inst lenv (t, d) inst in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv =
     List.fold_left
       (fun (t, d, lenv) arg ->
         let t, d, lenv = compile_aexpr lenv (t, d) arg in
-        let t, lenv = pushq lenv t !%rax in
+        let t = t ++ pushq !%rax in
         (t, d, lenv) )
       (t, d, lenv) (List.rev args)
   in
   let t = t ++ movq (ind ~ofs:(nb_args * lenv.word_size) rsp) !%rax in
-  assert (lenv.is_aligned lenv.stack_pos) ;
   let t = t ++ call_star (ind ~ofs:(fid_in_call * lenv.word_size) rax) in
-  let t, lenv = popqn lenv t nb_push in
-  let t, lenv = restore_stack lenv t align_data in
+  let t = t ++ popnq lenv nb_push in
   (t, d, lenv)
 
 and compile_constructor lenv (t, d) cid args =
   (*
-      alloc (1 + len(vargs)) -> rax
+      pushq   $(1 + len(vargs) * lenv.word_size)
+      call    boxed_malloc
+      popnq   1
       copy constr_id to 0(%rax)
       movq %rax  %rbx
       for each arg:
@@ -171,15 +168,17 @@ and compile_constructor lenv (t, d) cid args =
       movq %rbx %rax
   *)
   let nb_words = 1 + List.length args in
-  let t, lenv = alloc lenv t nb_words in
+  let t = t ++ pushq (imm (nb_words * lenv.word_size)) in
+  let t = t ++ call malloc_lbl in
+  let t = t ++ popnq lenv 1 in
   let t = t ++ movq (imm (Constructor.index_in_symbol cid)) (ind rax) in
   let t = t ++ movq !%rax !%rbx in
   let t, d, lenv, index =
     List.fold_left
       (fun (t, d, lenv, index) aexpr ->
-        let t, lenv = pushq lenv t !%rbx in
+        let t = t ++ pushq !%rbx in
         let t, d, lenv = compile_aexpr lenv (t, d) aexpr in
-        let t, lenv = popq lenv t rbx in
+        let t = t ++ popq rbx in
         let t = t ++ movq !%rax (ind ~ofs:(index * lenv.word_size) rbx) in
         (t, d, lenv, index + 1) )
       (t, d, lenv, 1) args
@@ -212,14 +211,18 @@ and compile_if lenv (t, d) cond tb fb =
 
 and compile_local_closure lenv (t, d) lbl vars insts closure_size =
   (*
-        alloc closure_size -> rax
+        pushq $(closure_size * lenv.word_size)
+        call  malloc
+        popnq 1
         movq $lbl 0(%rax)
         for each var:
           load var i(%rax)
         for inst:
           load inst i(%rax)
    *)
-  let t, lenv = alloc lenv t closure_size in
+  let t = t ++ pushq (imm (closure_size * lenv.word_size)) in
+  let t = t ++ call malloc_lbl in
+  let t = t ++ popnq lenv 1 in
   let t, index = (t ++ movq (ilab lbl) (ind rax), 1) in
   let t, d, lenv, index =
     List.fold_left
@@ -251,13 +254,11 @@ and compile_do_effect lenv (t, d) x =
       (restore stack)
       popq %r12
    *)
-  let t, lenv = pushq lenv t !%r12 in
+  let t = t ++ pushq !%r12 in
   let t, d, lenv = compile_aexpr lenv (t, d) x in
   let t = t ++ movq !%rax !%r12 in
-  let t, align_data, lenv = align_stack lenv t 0 in
   let t = t ++ call_star (ind rax) in
-  let t, lenv = restore_stack lenv t align_data in
-  let t, lenv = popq lenv t r12 in
+  let t = t ++ popq r12 in
   (t, d, lenv)
 
 and compile_let lenv (t, d) v x y =
@@ -304,12 +305,12 @@ and compile_int_compare_and_branch lenv (t, d) var cst lt eq gt =
 
 and compile_string_compare_and_branch lenv (t, d) var cst lt eq gt =
   (*
-      load_var var -> %rdi
-      movq    $cst, %rsi
-      (align stack)
-      call  strcmp
-      (restore stack)
-      testq   %eax, %eax <- strcmp is a Int -> 4 bytes
+      pushq   $cst
+      load_var var -> %rax
+      pushq   %rax
+      call    strcmp
+      popnq   2
+      testl   %eax, %eax <- strcmp is a Int -> 4 bytes
       jg      greater
       js      lower
       equal -> rax
@@ -325,11 +326,11 @@ and compile_string_compare_and_branch lenv (t, d) var cst lt eq gt =
     (code_lbl (), code_lbl (), code_lbl (), string_lbl ())
   in
   let d = d ++ label string_cst ++ string cst in
-  let t, d, lenv = load_var lenv (t, d) var rdi in
-  let t = t ++ movq (ilab string_cst) !%rsi in
-  let t, align_data, lenv = align_stack lenv t 0 in
-  let t = t ++ call "strcmp" in
-  let t, lenv = restore_stack lenv t align_data in
+  let t = t ++ pushq (ilab string_cst) in
+  let t, d, lenv = load_var lenv (t, d) var rax in
+  let t = t ++ pushq !%rax in
+  let t = t ++ call strcmp_lbl in
+  let t = t ++ popnq lenv 2 in
   let t = t ++ testl !%eax !%eax in
   let t = t ++ jg greater_lbl in
   let t = t ++ js lower_lbl in
@@ -379,8 +380,8 @@ and compile_constructor_case lenv (t, d) v symb branchs other =
   let cstr_list =
     let cstr_map = Symbol.Map.find symb lenv.constrs in
     let cstr_list =
-      Constructor.Map.fold
-        (fun cstr _ l -> (Constructor.index_in_symbol cstr, cstr) :: l)
+      Constructor.Set.fold
+        (fun cstr l -> (Constructor.index_in_symbol cstr, cstr) :: l)
         cstr_map []
     in
     let cstr_list =
@@ -419,52 +420,47 @@ and compile_constructor_case lenv (t, d) v symb branchs other =
 
 (** [compile_aexpr asm x] : load the value of [x] in [%rax]. *)
 and compile_aexpr lenv asm x =
-  let old_pos = lenv.stack_pos in
-  let t, d, lenv =
-    match x.alloc_expr with
-    | AConstant c ->
-        load_constant lenv asm c !%rax
-    | AVariable loc ->
-        load_var lenv asm loc rax
-    | ANeg x ->
-        int_neg compile_aexpr lenv asm x
-    | ANot x ->
-        boolean_not compile_aexpr lenv asm x
-    | ACompare (lhs, ((Equal | NotEqual) as op), rhs) ->
-        compile_equalities lenv asm lhs op rhs
-    | ACompare (lhs, ((Lower | LowerEqual | GreaterEqual | Greater) as op), rhs)
-      ->
-        compile_int_compare lenv asm lhs op rhs
-    | AArithOp (lhs, op, rhs) ->
-        compile_arith_op lenv asm lhs op rhs
-    | ABooleanOp (lhs, op, rhs) ->
-        compile_boolean_op lenv asm lhs op rhs
-    | AStringConcat (lhs, rhs) ->
-        string_concat compile_aexpr lenv asm lhs rhs
-    | AFunctionCall (fid, intls, args) ->
-        compile_fun_call lenv asm fid intls args
-    | AInstanceCall (inst, fid, args) ->
-        compile_inst_call lenv asm inst fid args
-    | AConstructor (cid, args) ->
-        compile_constructor lenv asm cid args
-    | AIf (cond, tb, fb) ->
-        compile_if lenv asm cond tb fb
-    | ALocalClosure (lbl, vars, insts, i) ->
-        compile_local_closure lenv asm lbl vars insts i
-    | ADoEffect x ->
-        compile_do_effect lenv asm x
-    | ALet (v_pos, x, y) ->
-        compile_let lenv asm v_pos x y
-    | AIntCompareAndBranch d ->
-        compile_int_compare_and_branch lenv asm d.var d.cst d.lower d.equal
-          d.greater
-    | AStringCompareAndBranch d ->
-        compile_string_compare_and_branch lenv asm d.var d.cst d.lower d.equal
-          d.greater
-    | AContructorCase (v, symb, branchs, other) ->
-        compile_constructor_case lenv asm v symb branchs other
-    | AGetField (v_pos, index) ->
-        compile_get_field lenv asm v_pos index
-  in
-  assert (lenv.stack_pos = old_pos) ;
-  (t, d, lenv)
+  match x.alloc_expr with
+  | AConstant c ->
+      load_constant lenv asm c !%rax
+  | AVariable loc ->
+      load_var lenv asm loc rax
+  | ANeg x ->
+      int_neg compile_aexpr lenv asm x
+  | ANot x ->
+      boolean_not compile_aexpr lenv asm x
+  | ACompare (lhs, ((Equal | NotEqual) as op), rhs) ->
+      compile_equalities lenv asm lhs op rhs
+  | ACompare (lhs, ((Lower | LowerEqual | GreaterEqual | Greater) as op), rhs)
+    ->
+      compile_int_compare lenv asm lhs op rhs
+  | AArithOp (lhs, op, rhs) ->
+      compile_arith_op lenv asm lhs op rhs
+  | ABooleanOp (lhs, op, rhs) ->
+      compile_boolean_op lenv asm lhs op rhs
+  | AStringConcat (lhs, rhs) ->
+      string_concat compile_aexpr lenv asm lhs rhs
+  | AFunctionCall (fid, intls, args) ->
+      compile_fun_call lenv asm fid intls args
+  | AInstanceCall (inst, fid, args) ->
+      compile_inst_call lenv asm inst fid args
+  | AConstructor (cid, args) ->
+      compile_constructor lenv asm cid args
+  | AIf (cond, tb, fb) ->
+      compile_if lenv asm cond tb fb
+  | ALocalClosure (lbl, vars, insts, i) ->
+      compile_local_closure lenv asm lbl vars insts i
+  | ADoEffect x ->
+      compile_do_effect lenv asm x
+  | ALet (v_pos, x, y) ->
+      compile_let lenv asm v_pos x y
+  | AIntCompareAndBranch d ->
+      compile_int_compare_and_branch lenv asm d.var d.cst d.lower d.equal
+        d.greater
+  | AStringCompareAndBranch d ->
+      compile_string_compare_and_branch lenv asm d.var d.cst d.lower d.equal
+        d.greater
+  | AContructorCase (v, symb, branchs, other) ->
+      compile_constructor_case lenv asm v symb branchs other
+  | AGetField (v_pos, index) ->
+      compile_get_field lenv asm v_pos index

@@ -14,7 +14,7 @@ let expr_unify_wrapped lenv t1 t2 expr =
 let make_expr expr expr_typ =
   (* This expression is of type Unit, so its value can only be unit.
      Moreover, no side effect can occurs in [expr] (otherwise it
-     would be an Effect Unit). So this is just the unit type ! ! *)
+     would be an Effect Unit). So this is just the unit constant ! *)
   if is_unit_t expr_typ then {expr= TConstant Unit; expr_typ}
   else {expr; expr_typ}
 
@@ -44,22 +44,14 @@ and compute_expr_type genv lenv (expr : Ast.expr) =
     match SMap.find_opt "unit" lenv.vartype with
     | Some (vtyp, vid) ->
         return (TVariable vid) vtyp
-    | None -> (
-      match Function.exists "unit" with
-      | Some _ ->
-          failwith "Global Constant are not yet suported"
-      | None ->
-          return (TConstant Unit) unit_t ) )
+    | None ->
+        return (TConstant Unit) unit_t )
   | ExprVar v -> (
     match SMap.find_opt v lenv.vartype with
     | Some (vtyp, vid) ->
         return (TVariable vid) vtyp
-    | None -> (
-      match Function.exists v with
-      | Some _ ->
-          failwith "Global Constant are not yet suported"
-      | None ->
-          TypingError.variable_not_declared v expr ) )
+    | None ->
+        TypingError.variable_not_declared v expr )
   | WithType (e, t) ->
       let t_found = wf_type genv lenv t in
       let texpr, i2r = type_expr genv lenv e t_found in

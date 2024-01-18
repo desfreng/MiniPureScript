@@ -1,17 +1,7 @@
-include X86_64
-include AllocAst
 open DefaultTypingEnv
-
-let pp_t ppf t = X86_64.print_program ppf {text= t; data= nop}
-
-type 'a env =
-  { schema_lbl: label Schema.map
-  ; funs_lbl: label Function.map
-  ; constrs: 'a Constructor.map Symbol.map
-  ; schemas: schema Schema.map
-  ; stack_pos: int
-  ; word_size: int
-  ; is_aligned: int -> bool }
+open CompileLibC
+open AllocAst
+open X86_64
 
 (** [load_constant lenv asm c dest] : load the value of the constant [c] in [dest]. *)
 let load_constant lenv (t, d) constant dest =
@@ -32,7 +22,6 @@ let load_constant lenv (t, d) constant dest =
 let load_var lenv (t, d) var_loc dest =
   match var_loc with
   | AStackVar i ->
-      Format.printf "Var is at %i@." i ;
       (t ++ movq (ind ~ofs:i rbp) !%dest, d, lenv)
   | AClosVar i ->
       (t ++ movq (ind ~ofs:i r12) !%dest, d, lenv)
@@ -62,81 +51,21 @@ let compile_get_field lenv (t, d) v_pos index =
   let t = t ++ movq (ind ~ofs:((1 + index) * lenv.word_size) rax) !%rax in
   (t, d, lenv)
 
-let align_stack lenv t nb_push =
-  let new_push = ref 0 in
-  while
-    not
-      (lenv.is_aligned
-         (lenv.stack_pos - ((!new_push + nb_push) * lenv.word_size)) )
-  do
-    incr new_push
-  done ;
-  let stack_offset = !new_push * lenv.word_size in
-  if stack_offset = 0 then (t, 0, lenv)
-  else
-    let t = t ++ subq (imm stack_offset) !%rsp in
-    let lenv = {lenv with stack_pos= lenv.stack_pos - stack_offset} in
-    (t, stack_offset, lenv)
-
-let restore_stack lenv t stack_offset =
-  if stack_offset = 0 then (t, lenv)
-  else
-    let t = t ++ addq (imm stack_offset) !%rsp in
-    let lenv = {lenv with stack_pos= lenv.stack_pos + stack_offset} in
-    (t, lenv)
-
-let pushq lenv t r =
-  (t ++ pushq r, {lenv with stack_pos= lenv.stack_pos - lenv.word_size})
-
-let popq lenv t r =
-  (t ++ popq r, {lenv with stack_pos= lenv.stack_pos + lenv.word_size})
-
-let popqn lenv t nb_word =
+let popnq lenv nb_word =
   let stack_offset = nb_word * lenv.word_size in
-  ( t ++ addq (imm stack_offset) !%rsp
-  , {lenv with stack_pos= lenv.stack_pos + stack_offset} )
-
-(** Perform a call to [malloc], put the result in %rax.
-    The following registers are untouched : %rbx, %rbp, %r12, %r13, %r14 & %r15 *)
-let alloc lenv t nb_words =
-  (*
-      movq  $[nb_word * lenv.word_size], %rdi
-      (align stack)
-      call  malloc
-      (restore stack)
-   *)
-  let t = t ++ movq (imm (nb_words * lenv.word_size)) !%rdi in
-  let t, stack_data, lenv = align_stack lenv t 0 in
-  let t = t ++ call "malloc" in
-  let t, lenv = restore_stack lenv t stack_data in
-  (t, lenv)
-
-let enter_fun lenv (t, d) lbl res_space =
-  let t = t ++ label lbl in
-  let t, lenv = pushq lenv t !%rbp in
-  let t = t ++ movq !%rsp !%rbp in
-  if res_space = 0 then (
-    Format.printf "No space for %s@." lbl ;
-    (t, d, lenv) )
-  else
-    let t = t ++ subq (imm res_space) !%rsp in
-    (t, d, lenv)
-
-let leave_fun lenv (t, d) =
-  let t = t ++ movq !%rbp !%rsp in
-  let t, lenv = popq lenv t rbp in
-  let t = t ++ ret in
-  (t, d, lenv)
+  addq (imm stack_offset) !%rsp
 
 let add_pure lenv (t, d) =
-  (* Pure x return the closure of the identitu function:
+  (* Pure x return the closure of the identity function:
 
      pure_clos:
        movq 8(%r12), %rax
        ret
 
      pure:
-       alloc 2 -> rax
+       pushq $(2 * lenv.word_size)
+       call boxed_malloc
+       popnq 1
        movq $pure_clos, 0(%rax)
        movq 8(%rsp), %rbx
        movq %rbx, 8(%rax)
@@ -149,7 +78,9 @@ let add_pure lenv (t, d) =
   let t = t ++ ret in
   (* pure actual code *)
   let t = t ++ label pure_lbl in
-  let t, lenv = alloc lenv t 2 in
+  let t = t ++ pushq (imm (2 * lenv.word_size)) in
+  let t = t ++ call malloc_lbl in
+  let t = t ++ popnq lenv 1 in
   let t = t ++ movq (ilab pure_clos) (ind rax) in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx in
   let t = t ++ movq !%rbx (ind ~ofs:lenv.word_size rax) in
@@ -163,30 +94,32 @@ let add_pure lenv (t, d) =
 let add_log lenv (t, d) =
   (*
      log_clos:
-       movq 8(%r12), %rdi
-       (align stack)
-       call "puts"
-       (restore stack)
+       pushq 8(%r12)
+       call boxed_puts
+       popnq 1
        ret
 
      log:
-       alloc 2 -> rax
+       pushq $(2 * lenv.word_size)
+       call boxed_malloc
+       popnq 1
        movq $pure_clos, 0(%rax)
        movq 8(%rsp), %rbx
        movq %rbx, 8(%rax)
        ret
   *)
   let log_lbl, log_clos = (function_lbl log_fid None, local_lbl log_fid) in
-  (* pure closure :*)
+  (* pure closure *)
   let t = t ++ label log_clos in
-  let t = t ++ movq (ind ~ofs:lenv.word_size r12) !%rdi in
-  let t, align_data, lenv = align_stack lenv t 0 in
-  let t = t ++ call "puts" in
-  let t, lenv = restore_stack lenv t align_data in
+  let t = t ++ pushq (ind ~ofs:lenv.word_size r12) in
+  let t = t ++ call puts_lbl in
+  let t = t ++ popnq lenv 1 in
   let t = t ++ ret in
   (* pure actual code *)
   let t = t ++ label log_lbl in
-  let t, lenv = alloc lenv t 2 in
+  let t = t ++ pushq (imm (2 * lenv.word_size)) in
+  let t = t ++ call malloc_lbl in
+  let t = t ++ popnq lenv 1 in
   let t = t ++ movq (ilab log_clos) (ind rax) in
   let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx in
   let t = t ++ movq !%rbx (ind ~ofs:lenv.word_size rax) in
@@ -202,16 +135,16 @@ let add_show_int lenv (t, d) =
 
          .text
      show_int_f: <- This is the function in the instance
-         alloc 20 -> rax
-         movq   %rax, %r13 <- calle saved reg
-         movq   %r13, %rdi
-         movq   $format, %rsi
-         movq   8(%rsp), %rdx
-         xorq   %rax, %rax
-         (align stack)
-         call "sprintf"
-         (restore stack)
-         movq  %r13, %rax
+         pushq  $20
+         call   boxed_malloc
+         popnq  1
+         ; Need to call boxed_sprintf with args (%rax, $format, 8(%rsp))
+         pushq  8(%rsp)
+         pushq  $format
+         pushq  %rax
+         call   boxed_sprintf
+         popq   %rax
+         popnq  2
          ret
 
          .data
@@ -226,18 +159,15 @@ let add_show_int lenv (t, d) =
   let show_int_f = function_lbl show_fid (Some show_int) in
   let d = d ++ label show_int ++ address [show_int_f] in
   let t = t ++ label show_int_f in
-  let t, lenv =
-    alloc lenv t ((20 / lenv.word_size) + 1 (* 3 * 8 bytes in x86. *))
-  in
-  let t = t ++ movq !%rax !%r13 in
-  let t = t ++ movq !%r13 !%rdi in
-  let t = t ++ movq (ilab format_str) !%rsi in
-  let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rdx in
-  let t = t ++ xorq !%rax !%rax in
-  let t, align_data, lenv = align_stack lenv t 0 in
-  let t = t ++ call "sprintf" in
-  let t, lenv = restore_stack lenv t align_data in
-  let t = t ++ movq !%r13 !%rax in
+  let t = t ++ pushq (imm 20) in
+  let t = t ++ call malloc_lbl in
+  let t = t ++ popnq lenv 1 in
+  let t = t ++ pushq (ind ~ofs:lenv.word_size rsp) in
+  let t = t ++ pushq (ilab format_str) in
+  let t = t ++ pushq !%rax in
+  let t = t ++ call sprintf_lbl in
+  let t = t ++ popq rax in
+  let t = t ++ popnq lenv 2 in
   let t = t ++ ret in
   let lenv =
     {lenv with schema_lbl= Schema.Map.add show_int_sid show_int lenv.schema_lbl}
@@ -290,31 +220,81 @@ let add_show_bool lenv (t, d) =
   in
   (t, d, lenv)
 
-let add_mod lenv (t, d) =
-  let mod_fun = function_lbl mod_fid None in
-  let mod_end, rhs_neg = (code_lbl (), code_lbl ()) in
-  let t = t ++ label mod_fun in
-  let t = t ++ movq (ind ~ofs:lenv.word_size rsp) !%rbx (* lhs -> rbx *) in
-  let t =
-    t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax (* rhs -> rax *)
-  in
+let div_lbl = Label.with_prefix "boxed_div"
+
+(** Because the code for the division is quite long, we box it into a assembly
+    function *)
+let add_div lenv (t, d) =
+  (* - lhs is at 8(%rsp) (we dont make an activation frame, not needed here)
+     - rhs is at 16(%rsp)
+
+     The remainder is positive in PureScript, so we tweak the result of the
+     division to keep the euclidean division properties. *)
+  let div_end, rhs_neg = (Label.code_lbl (), Label.code_lbl ()) in
+  let t = t ++ label div_lbl in
+  let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax in
+  (* if rhs = 0, return 0 because x/0 = 0 in PureScript... *)
   let t = t ++ testq !%rax !%rax in
-  let t = t ++ je mod_end (* rax = 0 => lhs % rhs = 0 *) in
-  let t = t ++ movq !%rax !%rcx (* rhs -> rcx *) in
+  let t = t ++ je div_end in
+  (* lhs -> rbx & rhs -> rcx *)
+  let t = t ++ movq (ind ~ofs:(1 * lenv.word_size) rsp) !%rbx in
+  let t = t ++ movq !%rax !%rcx in
+  (* lhs -> rdx::rax and division by rcx *)
   let t = t ++ movq !%rbx !%rax in
   let t = t ++ cqto in
   let t = t ++ idivq !%rcx in
-  let t = t ++ movq !%rdx !%rax (* lhs "%" rhs -> rax *) in
-  let t = t ++ testq !%rax !%rax in
-  let t = t ++ je mod_end (* lhs % rhs = 0 -> result ok. *) in
-  let t = t ++ testq !%rbx !%rbx in
-  let t = t ++ jns mod_end (* lhs > 0 => result if ok. *) in
+  (* if the remainder is >= 0, we keep the result as it is. *)
+  let t = t ++ cmpq (imm 0) !%rdx in
+  let t = t ++ jge div_end in
+  (* We need to tweak the result here. *)
   let t = t ++ testq !%rcx !%rcx in
-  let t = t ++ js rhs_neg (* rhs < 0 => we return %rax - rhs *) in
-  let t = t ++ addq !%rcx !%rax (* rhs > 0 => we return %rax + rhs *) in
-  let t = t ++ jmp mod_end in
+  let t = t ++ js rhs_neg in
+  (* rhs > 0 so rax -= 1 *)
+  let t = t ++ decq !%rax in
+  let t = t ++ ret in
+  (* rhs < 0  so rax += 1 *)
+  let t = t ++ label rhs_neg in
+  let t = t ++ incq !%rax in
+  (* returns the result *)
+  let t = t ++ label div_end in
+  let t = t ++ ret in
+  (t, d, lenv)
+
+let add_mod lenv (t, d) =
+  (* - lhs is at 8(%rsp) (we dont make an activation frame, not needed here)
+     - rhs is at 16(%rsp)
+
+     The remainder is positive in PureScript, so we tweak the result of the
+     division to keep the euclidean division properties. *)
+  let mod_fun = function_lbl mod_fid None in
+  let mod_end, rhs_neg = (code_lbl (), code_lbl ()) in
+  let t = t ++ label mod_fun in
+  let t = t ++ movq (ind ~ofs:(2 * lenv.word_size) rsp) !%rax in
+  (* if rhs = 0, return 0 because x % 0 = 0 in PureScript... *)
+  let t = t ++ testq !%rax !%rax in
+  let t = t ++ je mod_end in
+  (* lhs -> rbx & rhs -> rcx *)
+  let t = t ++ movq (ind ~ofs:(1 * lenv.word_size) rsp) !%rbx in
+  let t = t ++ movq !%rax !%rcx in
+  (* lhs -> rdx::rax and division by rcx *)
+  let t = t ++ movq !%rbx !%rax in
+  let t = t ++ cqto in
+  let t = t ++ idivq !%rcx in
+  (* move the remainder in rax *)
+  let t = t ++ movq !%rdx !%rax in
+  (* if the remainder is >= 0, we keep the result as it is. *)
+  let t = t ++ cmpq (imm 0) !%rax in
+  let t = t ++ jge mod_end in
+  (* We need to tweak the result here. *)
+  let t = t ++ testq !%rcx !%rcx in
+  let t = t ++ js rhs_neg in
+  (* rhs > 0 so we return %rax + rhs (ie. lhs % rhs + rhs) *)
+  let t = t ++ addq !%rcx !%rax in
+  let t = t ++ ret in
+  (* rhs < 0 so we return %rax - rhs (ie. lhs % rhs + |rhs|) *)
   let t = t ++ label rhs_neg in
   let t = t ++ subq !%rcx !%rax in
+  (* returns the result *)
   let t = t ++ label mod_end in
   let t = t ++ ret in
   let lenv =
@@ -324,6 +304,7 @@ let add_mod lenv (t, d) =
 
 let add_builtins lenv =
   let t, d = (nop, nop) in
+  let t, d, lenv = add_div lenv (t, d) in
   let t, d, lenv = add_mod lenv (t, d) in
   let t, d, lenv = add_pure lenv (t, d) in
   let t, d, lenv = add_log lenv (t, d) in

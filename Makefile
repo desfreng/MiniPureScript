@@ -7,8 +7,8 @@ ppurse: $(sources)
 
 clean:
 	rm -rf ppurse _build
-	rm -f "./test-files/**/*.s"
-	rm -f "./spago/src/*.s"
+	rm -f ./test-files/**/*.s
+	rm -f ./spago/src/*.s
 	rm -f ./test-files/a.out
 
 parsing-test: ppurse

@@ -1,9 +1,9 @@
-open X86CompileUtils
+open X86_64
 
 (** [boolean_and f (t, d) lhs rhs] : load the value of [lhs && rhs] in [%rax].
     The value of [lhs] and [rhs] is compiled with [f]. *)
 let boolean_and f lenv (t, d) lhs rhs =
-  let and_skip = code_lbl () in
+  let and_skip = Label.code_lbl () in
   (*
          lhs -> rax
          testq  %rax, %rax
@@ -22,7 +22,7 @@ let boolean_and f lenv (t, d) lhs rhs =
     The value of [lhs] and [rhs] is compiled with [f]. *)
 let boolean_or f lenv (t, d) lhs rhs =
   (* The order of evaluation DOES import here, if lhs = 1 we do not compile rhs *)
-  let or_skip = code_lbl () in
+  let or_skip = Label.code_lbl () in
   (*
          lhs -> rax
          testq  %rax, %rax

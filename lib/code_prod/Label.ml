@@ -2,6 +2,10 @@ type label = string
 
 let existing_lbl = Hashtbl.create 17
 
+let main_lbl =
+  let () = Hashtbl.add existing_lbl "main" () in
+  "main"
+
 let fresh_lbl ~atomic txt =
   let final_lbl =
     if (not atomic) || Hashtbl.mem existing_lbl txt then (

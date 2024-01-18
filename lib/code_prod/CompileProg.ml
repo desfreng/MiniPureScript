@@ -1,17 +1,18 @@
-open X86CompileUtils
-open X86CompileExpr
+open AllocAst
+open X86_64
+open CompileLibC
+open CompileUtils
+open CompileExpr
 
 let compile_fun_part lenv (lbl, fpart) =
-  let old_sp_pos = lenv.stack_pos in
   let t, d = (nop, nop) in
-  let t, d, lenv = enter_fun lenv (t, d) lbl fpart.local_stack_reserved in
+  let t = enter_fun t lbl fpart.local_stack_reserved in
   let t, d, lenv =
     List.fold_left
       (fun (t, d, lenv) e -> compile_aexpr lenv (t, d) e)
       (t, d, lenv) fpart.local_body
   in
-  let t, d, lenv = leave_fun lenv (t, d) in
-  assert (old_sp_pos = lenv.stack_pos) ;
+  let t = leave_fun t in
   (t, d, lenv)
 
 let compile_afun lenv (f_lbl, f) =
@@ -23,11 +24,9 @@ let compile_afun lenv (f_lbl, f) =
         (t ++ pt, d ++ pd, lenv) )
       (t, d, lenv) f.afun_annex
   in
-  let old_sp_pos = lenv.stack_pos in
-  let t, d, lenv = enter_fun lenv (t, d) f_lbl f.afun_stack_reserved in
+  let t = enter_fun t f_lbl f.afun_stack_reserved in
   let t, d, lenv = compile_aexpr lenv (t, d) f.afun_body in
-  let t, d, lenv = leave_fun lenv (t, d) in
-  assert (old_sp_pos = lenv.stack_pos) ;
+  let t = leave_fun t in
   (t, d, lenv)
 
 let compile_schema lenv (s : AllocAst.aschema) =
@@ -64,9 +63,11 @@ let compile_schema lenv (s : AllocAst.aschema) =
   else
     let nb_word = List.length fun_list + nb_arg in
     (* This is a function with arguments passed on the stack *)
-    let t, d, lenv = enter_fun lenv (t, d) schema_lbl 0 in
+    let t = enter_fun t schema_lbl 0 in
     (* We allocate the instance result *)
-    let t, lenv = alloc lenv t nb_word in
+    let t = t ++ pushq (imm (nb_word * lenv.word_size)) in
+    let t = t ++ call malloc_lbl in
+    let t = t ++ popnq lenv 1 in
     (* We copy each function name to its position. *)
     let t, index =
       List.fold_left
@@ -89,23 +90,28 @@ let compile_schema lenv (s : AllocAst.aschema) =
              (* The position of the ith argument is (word_size*(i+2)) *) ) )
     in
     assert (index = nb_word) ;
-    let t, d, lenv = leave_fun lenv (t, d) in
+    let t = leave_fun t in
     (t, d, lenv)
 
 let to_x86 (aprog : AllocAst.aprogram) =
   let constrs =
-    Symbol.Map.map (fun sdecl -> sdecl.symbol_constr) aprog.aprog_genv.symbols
+    Symbol.Map.map
+      (fun sdecl ->
+        Constructor.Map.fold
+          (fun v _ set -> Constructor.Set.add v set)
+          sdecl.symbol_constr Constructor.Set.empty )
+      aprog.aprog_genv.symbols
   in
   let lenv =
     { schema_lbl= aprog.aschema_labels
     ; funs_lbl= aprog.afuns_labels
     ; constrs
     ; schemas= aprog.aprog_genv.schemas
-    ; stack_pos= -8
     ; word_size= 8
-    ; is_aligned= (fun i -> i mod 16 == 0) }
+    ; align_stack= (fun () -> andq (imm (-16)) !%rsp) }
   in
   let t, d, lenv = add_builtins lenv in
+  let t, d, lenv = add_boxed_libc lenv (t, d) in
   let t, d, lenv =
     Schema.Map.fold
       (fun _ aschema (t, d, lenv) ->
@@ -121,17 +127,13 @@ let to_x86 (aprog : AllocAst.aprogram) =
         (t ++ ft, d ++ fd, lenv) )
       aprog.afuns (t, d, lenv)
   in
-  let start_label = "main" in
-  (* Is free because function label starts with 'fun_' *)
+  let start_label = Label.main_lbl in
   let main_label = Function.Map.find aprog.aprog_main lenv.funs_lbl in
   let t = t ++ globl start_label in
-  let t, d, lenv = enter_fun lenv (t, d) start_label 0 in
-  let t, align_data, lenv = align_stack lenv t 0 in
+  let t = enter_fun t start_label 0 in
   let t = t ++ call main_label in
   let t = t ++ movq !%rax !%r12 in
   let t = t ++ call_star (ind rax) in
-  let t, lenv = restore_stack lenv t align_data in
   let t = t ++ xorq !%rax !%rax in
-  let t, d, lenv = leave_fun lenv (t, d) in
-  assert (lenv.stack_pos = -8) ;
+  let t = leave_fun t in
   {text= t; data= d}

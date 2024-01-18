@@ -217,7 +217,8 @@ let rec allocate_expr aenv fp_cur e =
   | SBlock l -> (
     match l with
     | [] ->
-        failwith "Empty do Block."
+        (* A do block cannot be empty ! *)
+        assert false
     | [x] ->
         (* x is of type Effect Unit so we can just return it directly,
            no closure needed (x is already one !) and no label introduced. *)

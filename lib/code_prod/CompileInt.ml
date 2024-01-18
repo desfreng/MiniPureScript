@@ -1,4 +1,5 @@
-open X86CompileUtils
+open X86_64
+open CompileUtils
 
 (** [int_neg f asm x] : load the value of [-x] in [%rax].
     The value of [x] is compiled with [f]. *)
@@ -17,9 +18,9 @@ let int_eq f lenv (t, d) lhs rhs =
      sete   %al
      movzbq %al, rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ sete !%al in
   let t = t ++ movzbq !%al rax in
@@ -36,9 +37,9 @@ let int_neq f lenv (t, d) lhs rhs =
      setne  %al
      movzbq %al, rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ setne !%al in
   let t = t ++ movzbq !%al rax in
@@ -53,9 +54,9 @@ let int_add f lenv (t, d) lhs rhs =
      popq   rbx
      addq   %rbx, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ addq !%rbx !%rax in
   (t, d, lenv)
 
@@ -69,10 +70,10 @@ let int_sub f lenv (t, d) lhs rhs =
      popq   rax
      subq   %rbx, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
   let t = t ++ movq !%rax !%rbx in
-  let t, lenv = popq lenv t rax in
+  let t = t ++ popq rax in
   let t = t ++ subq !%rbx !%rax in
   (t, d, lenv)
 
@@ -85,67 +86,30 @@ let int_mul f lenv (t, d) lhs rhs =
      popq   rbx
      imulq  %rbx, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ imulq !%rbx !%rax in
   (t, d, lenv)
 
 (** [int_div f asm lhs rhs] : load the value of [lhs / rhs] in [%rax].
     The value of [lhs] and [rhs] is compiled with [f]. *)
 let int_div f lenv (t, d) lhs rhs =
-  (*
-   we put:
-     - lhs in rbx
-     - rhs in rcx
-     - the "result" in rax
-
-          lhs ->  rax
-          pushq   %rax
-          rhs ->  rax
-          movq    %rax, %rcx
-          popq    %rbx
-          testq   %rcx, %rcx
-          je      div_end         # rhs = 0 -> so th result is 0
-          movq    %rbx, %rax
-          cqto
-          idivq   %rcx
-          testq   %rdx, %rdx
-          jns     div_end         # lhs % rhs = 0 so no change needed.
-          testq   %rbx, %rbx
-          jns     div_end         # lhs > 0 so no change needed.
-          testq   %rcx, %rcx
-          js      rhs_neg         # rhs < 0 so rax += 1
-          dec     %rax            # rhs > 0 so rax -= 1
-          jmp     div_end
-
-      rhs_neg:
-          inc     %rax
-
-      div_end:
-  *)
-  let div_end, rhs_neg = (code_lbl (), code_lbl ()) in
+  (* lhs -> rax
+     pushq  %rax
+     rhs -> rax
+     popq   %rbx
+     pushq  %rax
+     pushq  %rbx
+     call   boxed_div *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t = t ++ movq !%rax !%rcx in
-  let t, lenv = popq lenv t rbx in
-  let t = t ++ testq !%rcx !%rcx in
-  let t = t ++ je div_end in
-  let t = t ++ movq !%rbx !%rax in
-  let t = t ++ cqto in
-  let t = t ++ idivq !%rcx in
-  let t = t ++ testq !%rdx !%rdx in
-  let t = t ++ je div_end in
-  let t = t ++ testq !%rbx !%rbx in
-  let t = t ++ jns div_end in
-  let t = t ++ testq !%rcx !%rcx in
-  let t = t ++ js rhs_neg in
-  let t = t ++ decq !%rax in
-  let t = t ++ jmp div_end in
-  let t = t ++ label rhs_neg in
-  let t = t ++ incq !%rax in
-  let t = t ++ label div_end in
+  let t = t ++ popq rbx in
+  let t = t ++ pushq !%rax in
+  let t = t ++ pushq !%rbx in
+  let t = t ++ call div_lbl in
+  let t = t ++ popnq lenv 2 in
   (t, d, lenv)
 
 (** [int_gt f lenv  (t, d) lhs rhs] : load the value of [lhs > rhs] in [%rax].
@@ -159,9 +123,9 @@ let int_gt f lenv (t, d) lhs rhs =
      setg   %al
      movzbq %al, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ setg !%al in
   let t = t ++ movzbq !%al rax in
@@ -178,9 +142,9 @@ let int_ge f lenv (t, d) lhs rhs =
      setge  %al
      movzbq %al, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ setge !%al in
   let t = t ++ movzbq !%al rax in
@@ -197,9 +161,9 @@ let int_lt f lenv (t, d) lhs rhs =
      setl   %al
      movzbq %al, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ setl !%al in
   let t = t ++ movzbq !%al rax in
@@ -216,9 +180,9 @@ let int_le f lenv (t, d) lhs rhs =
      setle  %al
      movzbq %al, %rax *)
   let t, d, lenv = f lenv (t, d) lhs in
-  let t, lenv = pushq lenv t !%rax in
+  let t = t ++ pushq !%rax in
   let t, d, lenv = f lenv (t, d) rhs in
-  let t, lenv = popq lenv t rbx in
+  let t = t ++ popq rbx in
   let t = t ++ cmpq !%rax !%rbx in
   let t = t ++ setle !%al in
   let t = t ++ movzbq !%al rax in
