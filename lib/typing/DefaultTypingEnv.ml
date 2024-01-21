@@ -121,7 +121,9 @@ let default_genv =
   ; tc2schemas=
       TypeClass.Map.singleton show_tid [show_int_schema; show_bool_schema]
   ; schemas=
-      Schema.Map.of_list
+      List.fold_left
+        (fun acc (sid, schema) -> Schema.Map.add sid schema acc)
+        Schema.Map.empty
         [ (show_int_schema.schema_id, show_int_schema)
         ; (show_bool_schema.schema_id, show_bool_schema) ] }
 
