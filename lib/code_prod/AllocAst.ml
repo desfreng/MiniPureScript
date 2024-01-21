@@ -6,21 +6,20 @@ type var_pos =
   | AStackVar of
       int (* A local variable (ie. in the stack, passed as an argument) *)
   | AClosVar of int
-(* Variable in a closure (ie. in the heap, reachable by the
-   %rdi pointer) *)
+(* Variable in a closure (ie. in the heap, reachable by the %r12 pointer)
+   AClosVar i ~= i(%r12) *)
 
 (* The position of an instance. *)
 type inst_pos =
   | AStackInst of int
-    (* A local variable (ie. in the stack, passed as an instance)
+    (* A local instance (ie. in the stack, passed as an argument)
        ALocalInst i ~= i(%rbp) *)
   | AClosInst of int
-  (* Instance in a closure (ie. in the heap, reachable by the
-     %rdi pointer)
-     AClosInst i ~= i(%rdi) *)
+  (* Instance in a closure (ie. in the heap, reachable by the %r12 pointer)
+     AClosInst i ~= i(%r12) *)
   | AInstInst of (int * int)
-(* Instance in an instance (ie. this is an instance required in a schema,
-   so it is added at the end of it.)
+(* Instance in an instance (ie. this is an instance required in a schema, so it
+   is added at the end of it.)
    AInstInst (i, j) ~= j(i(%rbp)) because i(%rbp) is a pointer to a bloc of
    memory with :
      - At the beginning, pointers to the code of each function in the instance.

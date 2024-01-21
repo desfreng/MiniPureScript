@@ -6,12 +6,13 @@
 \usepackage[french]{babel}
 \usepackage[indent]{parskip}
 \usepackage[bottom]{footmisc}
+\usepackage{amsmath}
 \usepackage{minted}
 \usepackage{calc}
 \usepackage{enumitem}
 \usepackage{hyperref}
 
-\newcommand{\ps}{\textsf{Purescript}}
+\newcommand{\ps}{\textsf{PureScript}}
 \newcommand{\pps}{\textsf{Petit Purescript}}
 
 \title{{\large Projet de Compilation}\\\pps}
@@ -19,83 +20,40 @@
 \begin{document}
 \maketitle
 
-\section*{Organisation}
-Ce projet utilise \textsf{dune}\footnote{\url{https://dune.build/}} comme moteur
-de production.
-Le code du compilateur \pps{} est séparé en deux parties :
+Le compilateur \texttt{ppurse} ici présenté, traite et supporte la totalité du
+sujet. De plus, ce compilateur supporte quelques extensions :
 \begin{itemize}
-    \item Une bibliothèque \textsf{PetitPureScript}, dont les sources se trouvent
-          dans le répertoire \texttt{lib}.
-    \item Le compilateur \textsf{ppurse}, dont les sources sont localisées dans
-          le répertoire \texttt{bin}.
+    \item Le typage des fonctions peut être rendu plus permissif, en autorisant
+          le filtrage sur tous les arguments à l'aide de l'option
+          \texttt{---permissive}.
+    \item Les expressions du type \texttt{Effect a} sont compilée comme des
+          clôtures afin d'imiter au plus le comportement du compilateur \ps.
+    \item Les constantes entières négatives sont autorisées dans les motifs de
+          filtrage.
 \end{itemize}
 
-\section*{Compilateur \textsf{ppurse}}
-Ce programme accepte les options suivantes :
-\begin{description}[font=\normalfont, leftmargin=!, labelwidth=\widthof{\texttt{----permissive}}]
-    \item[\texttt{----help}] affiche l'aide pour l'utilisation de ce compilateur.
-    \item[\texttt{----parse-only}] stoppe le compilateur après l'analyse
-        syntaxique du fichier d'entrée.
-    \item[\texttt{----type-only}] stoppe le compilateur après l'analyse
-        sémantique du fichier d'entrée.
-    \item[\texttt{----permissive}] autorise la définition de fonction avec des
-        motifs de filtrages quelconques sur tous les arguments.
-\end{description}
+\section*{Analyse lexicale et syntaxique}
+Aucune difficulté majeure a été rencontrée dans cette partie. La grammaire a
+légèrement été modifiée afin de supprimer des conflits
+\emph{réduction-réduction}. Un nouveau symbole a été introduit,
+\texttt{cio\_decl}\footnote{\it Class or Instance declaration.} afin que les
+références à des instances ou des classes de type soient différentiée des
+références à des symboles de types. Enfin, la règle
+$\left\langle\textsl{patarg}\right\rangle$ a été modifié afin d'accepter une
+constante entière négative.
 
-Le compilateur termine avec le code de sortie $0$ lorsque aucune erreur n'est
-remarquée. Un code de sortie $1$ signale une erreur lors de l'analyse du fichier
-d'entrée. Un code de sortie $2$ marque une erreur interne du compilateur.
-
-\section*{Bibliothèque \textsf{PetitPureScript}}
-Cette bibliothèque s'occupe d'implémenter et de définir toutes les structures
-nécessaires à l'implémentation du compilateur \textsf{ppurse}.
-
-\subsection*{Analyse lexicale}
-
-L'analyse lexicale est opérée à l'aide de l'outil \textsf{ocamllex}%
-\footnote{\url{https://v2.ocaml.org/manual/lexyacc.html}} au sein du fichier
-\verb|Lexer.mll|. Aucun problème n'a été rencontré lors de cette partie.
-Dans la suite de ce rapport ainsi qu'au sein du code de ce projet, les
-lexèmes renvoyés par l'analyseur lexical sont appelés \emph{pretokens}. Ce
-sont des lexèmes étiquetés par une position.
-
-L'ajout des lexèmes factices \verb|{|, \verb|}| et \verb|;| est réalisé au sein
-du fichier \verb|PostLexer.ml|. Ce fichier implémente l'algorithme proposé dans
-le sujet. Une fonction \verb|last_pos| est implémenté afin d'obtenir la position
-du dernier lexème retourné.
-
-\subsection*{Analyse syntaxique}
-L'analyse syntaxique est opérée à l'aide de l'outil \textsf{Menhir}%
-\footnote{\url{http://gallium.inria.fr/~fpottier/menhir}}. Le fichier
-\verb|Tokens.mly| défini les lexèmes ainsi que leurs priorités. Le fichier
-\verb|Parser.mly| s'occupe de construire l'arbre de syntaxe abstraite (AST)
-défini au sein du fichier \verb|Ast.ml|.
-
-La grammaire des types a été légèrement modifiée afin de supprimer des conflits
-\emph{reduce-reduce}. De plus, puisque les classes de type et les instances,
-qui partagent la même grammaire, ont un sens différent des types, un nouveau
-symbole a été introduit : \verb|cio_decl|%
-\footnote{\it Class or Instance declaration.}. On retrouve cette différence de
-type au sein de l'AST.
-
-Mis à part ces quelques remarques, aucune difficulté majeure n'a été rencontrée.
-
-\subsection*{Analyse sémantique}
-L'analyse sémantique est opérée au sein des fichiers du dossier \verb|lib/typing|.
-Lors de cette analyse, l'arbre de syntaxe abstraite produit à l'étape précédente
-est transformé en un nouveau, défini au sein du fichier \verb|TAst.ml|.
-
+\section*{Analyse sémantique, compilation des filtrages et résolution des instances}
 La déclaration des types est réalisée de la manière suivante :
 \begin{minted}{ocaml}
 type ttyp =
-  | TQuantifiedVar of TQVar.t
-  | TVar of { id : TVar.t; mutable def : ttyp option }
-  | TSymbol of string * ttyp list
+  | TQuantifiedVar of QTypeVar.t
+  | TVar of {id: TypeVar.t; mutable def: ttyp option}
+  | TSymbol of Symbol.t * ttyp list
 \end{minted}
 
-Les variables de types sont séparés en deux possibilités :
+Les variables de types sont alors séparés en deux possibilités :
 \begin{itemize}
-    \item Les variables de type universellement quantifiées : \verb|TQuantifiedVar|.
+    \item Les variables de type universellement quantifié : \verb|TQuantifiedVar|.
           Ce sont les variables introduites lors des déclarations de fonctions,
           de classes de types, d'instances ou de symbole de types.
     \item Les variables de type unifiable : \verb|TVar|. Ce sont des variables
@@ -103,56 +61,128 @@ Les variables de types sont séparés en deux possibilités :
           fonction ou l'application de constructeurs.
 \end{itemize}
 
-L'analyse sémantique et le regroupement des déclarations est effectuée au sein
-du fichier \verb|Typing.ml|. L'analyse des expressions est effectuée dans le
-fichier \verb|ExpressionTyping.ml|. Les motifs de filtrages sont analysés et
-typés dans le fichier \verb|PatternTyping.ml|. Le fichier \verb|CommonTyping.ml|
-regroupe des déclarations utilisées par plusieurs fichiers.
+Lors de la vérification de l'exhaustivité d'un filtrage, ce dernier est
+transformé selon le type de l'expression filtrée :
+\begin{itemize}
+    \item Les filtrages sur des expressions booléennes sont transformée en des
+          branchements conditionnels.
+    \item Les filtrages sur les entiers sont distingués des filtrages
+          sur les chaînes de caractères pour faciliter leur compilation dans la
+          suite. Ils sont donc représentés sous la forme de dictionnaire ayant
+          pour clef des entiers ou des chaînes de caractères. Cette solution
+          n'est pas la plus plaisante, car presque redondante, mais elle permet
+          d'assurer l'uniformité du type des constantes filtrant l'expression.
+    \item Les filtrages sur des constructeurs de type sont transcrits par un
+          dictionnaire associant chaque continuation à un constructeur.
+\end{itemize}
 
-On remarque qu'en \ps{} le code de la \autoref{fig:ex} est correct. Alors que
-la variable \verb|x| est de type \verb|List Int a| lors de l'appel de la fonction
-\verb|log| à la ligne $16$, ce code est accepté. En effet, le type de la
-variable \verb|x| est résolu à la ligne suivante, \verb|x| est de type
-\verb|List Int Boolean|. Ce code illustre que la résolution des instances est réalisée
-après l'analyse de l'expression des fonctions. Cette résolution est effectuée
-au sein du fichier \verb|ResolveInstance.ml|.
+Les instances de types sont résolue après l'analyse sémantique de la fonction
+dans laquelle la résolution prend lieu. On procède de cette manière afin
+d'accepter, comme \ps, le code du test \mbox{\texttt{lazy-inst.purs}}.
 
-Le filtrage est compilé en un \emph{case} sur tous les constructeurs possibles
-du motif au sein du fichier \verb|CompileCase.ml|. Enfin, le fichier
-\verb|TypingError.ml| contient le code nécessaire à la production des erreurs
-rencontrée lors de l'analyse sémantique.
+Le fichier \texttt{TypedAst.ml} décrit la représentation d'un programme après
+l'analyse sémantique.
 
-\begin{figure}[H]
-    \begin{minted}[fontsize=\footnotesize,linenos]{haskell}
-module Main where
+\section*{Simplification du programme}
+Une passe de simplification est effectuée entre le typage et la suite de la
+compilation. Cette étape permet de propager les constantes et de procéder à de
+procéder à de nombreuses substitutions sur les variables introduites lors de la
+compilation des filtrages et des fonctions. Lors de cette étape, les filtrages
+sur les constantes (entiers ou chaînes de caractères) sont transformés en des
+arbres binaires de recherche. De plus, certaines expressions constantes sont, en
+partie, évaluées par le compilateur. Enfin, lors de cette étape, les opérateurs
+binaires sont classés dans plusieurs catégories selon le type de leurs arguments
+et de leur résultat.
 
-import Prelude
-import Effect
-import Effect.Console
+Le fichier \texttt{SympAst.ml} décrit la représentation d'un programme après
+la passe de simplification.
 
-data List a b = Nil a | Cons b (List a b)
+\section*{Allocation des variables locales}
+La passe d'allocation des variables locales calcule la taille du tableau
+d'activation de chaque fonction. De plus, lors de cette passe, les variables
+locales sont positionnées dans la mémoire (par rapport à \texttt{\%rbp}). C'est
+également lors de cette étape que les blocs \texttt{do} correspondant à la
+construction d'une clôture à partir d'autres clôtures sont traités. On calcule
+alors l'ensemble des variables libres et des instances locales (celles données
+en argument à une fonction) utilisées au sein des blocs \texttt{do}. Puis,
+le code correspondant au bloc \texttt{do} est placé dans une nouvelle fonction
+accédant à ses arguments via la clôture toujours placée dans registre
+\texttt{\%r12}. On fera attention à sauvegarder cette clôture lors de l'appel à
+une clôture dans une clôture.
 
-instance (Show a, Show b) => Show (List a b) where
-    show (Nil x) = "(Nil " <> show x <> ")"
-    show (Cons hd tl) = "(Cons " <> show hd <> " " <> show tl <> ")"
+Le fichier \texttt{AllocAst.ml} décrit la représentation d'un programme après
+la passe d'allocation des variables et le traitement des clôtures introduites
+par les blocs \texttt{do}.
 
-main :: Effect Unit
-main = let x = Nil 1 in -- x :: List Int a, with a unknown at this point
-  do
-    log (show x)
-    (let y = Cons true x in log (show y)) -- Here we find that a = Boolean, so x :: List Int Boolean
-    log (show x)
-        \end{minted}
-    \caption{Exemple \ps{}.}
-    \label{fig:ex}
-\end{figure}
+\section*{Compilation vers x86\_64}
+On respecte le schéma de compilation proposé dans le sujet. On impose également
+que lors d'un appel à une clôture, cette dernière est placée dans le registre
+\texttt{\%r12}. Lors de la construction de nouvelles instances par un schéma de
+classe de type, on se sert de l'instance construite par le schéma afin de
+stocker les instances dont elle nécessite. Celles-ci sont placées à la suite des
+pointeurs vers le code des fonctions déclarées dans la classe de type. Enfin,
+afin que les fonctions implémentées dans un schéma d'instance de type aient
+accès aux instances dont elles font usage, on place toujours l'instance dans
+laquelle elles ont été déclarée sur le tas, avant tous les arguments\footnote{
+    Comme une fonction classique.}
 
+Les fonctions de la bibliothèque standard du C utilisées sont encapsulés dans
+des fonctions respectant la convention d'appel proposée dans le sujet. Ces
+fonctions ainsi que les fonctions prédéfinies sont toujours ajoutées au code
+assembleur produit. Quelques remarques sur ces fonctions :
+\begin{itemize}
+    \item La fonction \texttt{pure} est compilée comme la fonction retournant
+          une clôture de la fonction identité.
+    \item La fonction \texttt{log} est compilée comme la fonction retournant une
+          clôture de la fonction affichant du texte à sur la console.
+    \item La fonction \texttt{mod} n'a pas été \textit{inline} au sein du code
+          produit. En effet, cette fonction émule le comportement de la fonction
+          \texttt{mod} de \ps, et nécessite donc plus qu'une poignée
+          d'instruction.
+    \item Une fonction \texttt{div} est introduite afin de simuler, de la même
+          manière que \texttt{mod}, la division de \ps.
+\end{itemize}
 
+On remarquera d'ailleurs qu'en \ps :
+\[
+    \forall x.~ \texttt{mod}\left(x, 0\right) = 0 \text{ et }
+    \texttt{div}\left(x, 0\right) = 0
+\]
 
-Compilation :
+\section*{Remarques}
+Ce projet fût très intéressant et pleins de rebondissement, en particulier la
+partie de production de code. Quelques améliorations pourraient cependant être
+ajoutés au code :
+\begin{itemize}
+    \item Une bonne refactorisation du code, en particulier lors de l'analyse
+          sémantique.
+    \item Des meilleurs messages d'erreurs lors d'un filtrage non exhaustif, en
+          énumérant les cas non traités.
+    \item Réaliser une allocation des registres afin de grandement diminuer le
+          nombre d'opérations sur la pile
+    \item Réaliser une meilleure sélection des instructions.
+\end{itemize}
 
-Les \texttt{Effect a} sont des clôtures retournant une valeur de type \texttt{a}.
-Division par $0$ et modulo par $0$ sont définis comme en PureScript par $0$.
-L'égalité de type \texttt{Unit} est toujours vraie, à l'inverse de la différence.
-
+Quelques tests ont été ajoutés afin de vérifier le comportement du code produit
+par le compilateur. Parmi ceux-ci, on notera :
+\begin{itemize}
+    \item \texttt{pi-with-bbp.purs} : Ce test approxime $\pi$ à l'aide de la
+          formule de \textsc{Bailey}-\textsc{Borwein}-\textsc{Plouffe}%
+          \footnote{Voir : \url{https://fr.wikipedia.org/wiki/Formule_BBP}}
+    \item \texttt{modulo.purs} : Ce test (généré) vérifie le comportement de la
+          fonction \texttt{mod}
+    \item \texttt{division.purs} : Même qu'au-dessus pour la division.
+    \item \texttt{lazy-inst.purs} : Ce test permet de vérifier la résolution des
+          instances.
+    \item \texttt{lazy-bool-op.purs} : Ce test permet de vérifier que les
+          opérations booléennes sont bien paresseuses à l'aide d'une boucle infinie.
+    \item \texttt{fibonacci.purs} : Ce test calcule quelques termes de la suite
+          de Fibonacci à l'aide d'une liste.
+    \item \texttt{evil\_effects.purs} : Ce test vérifie que la compilation des
+          effets est similaire à celle dans \ps.
+    \item \texttt{effect\_and\_inst.purs} : Ce test vérifie la compilation des
+          schémas d'instances.
+    \item \texttt{case4.purs} : Ce test vérifie la compilation du filtrage sur
+          les constantes.
+\end{itemize}
 \end{document}
